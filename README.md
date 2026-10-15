@@ -12,7 +12,7 @@ At the prompt of a Claude Code terminal session:
 /plugin install asciimood --marketplace tmdlz/asciimood
 ```
 
-Answer `y` to add the marketplace, press Enter to pick the user scope, and it's active. Then type `/asciimood` to pick your animation.
+Answer `y` to add the marketplace, press Enter to pick the user scope, and it's active. Then type `/asciimood` to pick your animation, or build a setup at [asciimood.com/#config](https://asciimood.com/#config) and paste the line it gives you.
 
 From a shell:
 

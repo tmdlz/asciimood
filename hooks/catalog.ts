@@ -16,6 +16,8 @@ export type Entry = {
   note: string
   /** Two hues (0-360) a one-ink picture is shaded between; scenes bring their own palette. */
   hues: [number, number]
+  /** Asciimood's own loops: the drawing in ANIMS, where it differs from `id` (an ascii.rest piece took the name first). */
+  anim?: string
   /** Asciimood's own loops: seconds per loop. */
   dur?: number
   piece?: PieceModule
@@ -28,18 +30,18 @@ const HUES: Record<string, [number, number]> = {
 }
 
 const OWN: Entry[] = ([
-  { id: 'cat', name: 'Sleeping cat', note: 'a cat asleep on a cushion, Zs drifting up', hues: [40, 85], dur: 6 },
+  { id: 'sleeping-cat', anim: 'cat', name: 'Sleeping cat', note: 'a cat asleep on a cushion, Zs drifting up', hues: [40, 85], dur: 6 },
   { id: 'orbits', name: 'Orbits', note: 'planets on their ellipses, a moon round the biggest', hues: [260, 300], dur: 12 },
-  { id: 'rain', name: 'Character rain', note: 'streams of glyphs falling at three speeds', hues: [145, 120], dur: 6 },
+  { id: 'char-rain', anim: 'rain', name: 'Character rain', note: 'streams of glyphs falling at three speeds', hues: [145, 120], dur: 6 },
   { id: 'helix', name: 'DNA helix', note: 'two strands turning, base pairs between them', hues: [170, 140], dur: 6 },
-  { id: 'tunnel', name: 'Tunnel', note: 'flying down a checkered tube', hues: [320, 260], dur: 6 },
+  { id: 'checker-tunnel', anim: 'tunnel', name: 'Tunnel', note: 'flying down a checkered tube', hues: [320, 260], dur: 6 },
   { id: 'fire', name: 'Fire', note: 'flames licking up from a hot bed', hues: [15, 45], dur: 3 },
-  { id: 'plasma', name: 'Plasma', note: 'soft waves of ink folding into each other', hues: [25, 340], dur: 10 },
+  { id: 'ink-plasma', anim: 'plasma', name: 'Plasma', note: 'soft waves of ink folding into each other', hues: [25, 340], dur: 10 },
   { id: 'moire', name: 'Moiré', note: 'two sets of rings drifting through each other', hues: [280, 230], dur: 12 },
   { id: 'torus', name: 'Spinning torus', note: 'a lit doughnut turning on two axes', hues: [200, 160], dur: 6 },
   { id: 'waves', name: 'Waves', note: 'three layers of sea and a little boat', hues: [230, 190], dur: 8 },
   { id: 'lava', name: 'Lava lamp', note: 'wax blobs rising and sinking', hues: [15, 350], dur: 10 },
-  { id: 'cube', name: 'Cube', note: 'a wireframe cube tumbling', hues: [60, 100], dur: 8 },
+  { id: 'wire-cube', anim: 'cube', name: 'Cube', note: 'a wireframe cube tumbling', hues: [60, 100], dur: 8 },
   { id: 'hero', name: 'ASCIIMOOD', note: 'the name, filled with plasma', hues: [30, 350], dur: 8 },
 ] as Omit<Entry, 'by' | 'cat'>[]).map(entry => ({ ...entry, by: 'Asciimood', cat: 'asciimood' }))
 
@@ -128,7 +130,7 @@ const shaded = (chars: string[], entry: Entry, W: number, H: number): Frame => {
 export const render = (entry: Entry, t: number, W: number, H: number): Frame => {
   if (entry.piece === undefined) {
     const p = (t / (entry.dur ?? 6)) % 1
-    const anim: Anim | undefined = ANIMS[entry.id]
+    const anim: Anim | undefined = ANIMS[entry.anim ?? entry.id]
     if (anim === undefined) return shaded(Array.from({ length: H }, () => ' '.repeat(W)), entry, W, H)
     return shaded(anim(p, W, H).split('\n').map(l => l.padEnd(W).slice(0, W)), entry, W, H)
   }

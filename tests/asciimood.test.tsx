@@ -101,3 +101,17 @@ test('on the main screen the picker fills the band above the prompt', async ($, 
   expect(art?.props?.rows).toBe(40)
   expect(await ui.find({ type: 'Button', key: 'close' })).toBeDefined()
 })
+
+test('a setup from the website picks per state, or one for everything', async ($, on) => {
+  host(on)
+  const per = await $.command.run({ command: 'asciimood', args: 'think=wire-cube write=fire' })
+  expect(JSON.stringify(per)).toContain('thinking… → Cube, writing code → Fire')
+
+  const all = await $.command.run({ command: 'asciimood', args: 'all=sleeping-cat' })
+  expect(JSON.stringify(all)).toContain('Sleeping cat for everything')
+
+  const bad = await $.command.run({ command: 'asciimood', args: 'think=wire-cube nap=fire' })
+  expect(bad.text).toContain('Unknown state "nap"')
+  const missing = await $.command.run({ command: 'asciimood', args: 'think=nope' })
+  expect(missing.text).toContain('No animation called "nope"')
+})

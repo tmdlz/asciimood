@@ -15,7 +15,7 @@ const PANE_ROWS = 200
 const SIDEBAR = 24
 const SITE_URL = 'https://asciimood.com'
 
-const INITIAL_PREFS: AsciimoodPrefs = { mode: 'auto', one: 'cat', perState: {}, isPaused: false, isHidingTools: true }
+const INITIAL_PREFS: AsciimoodPrefs = { mode: 'auto', one: 'sleeping-cat', perState: {}, isPaused: false, isHidingTools: true }
 const agent = atom({ plugin: 'asciimood', key: 'agent' } as const, { state: 'idle', detail: '' } as AsciimoodAgent)
 const prefs = atom({ plugin: 'asciimood', key: 'prefs' } as const, INITIAL_PREFS)
 const view = atom({ plugin: 'asciimood', key: 'view' } as const, { cat: '', offset: 0 } as AsciimoodView)
@@ -335,6 +335,30 @@ function pickRandom($: EngineInterface) {
   return choose($, wrapAt(others, Math.floor(Math.random() * others.length)).id)
 }
 
+const STATES = Object.keys(LABELS) as AgentState[]
+
+/**
+ * A setup as asciimood.com's configurator writes it: `all=<animation>` plays one for
+ * everything, `<state>=<animation>` picks per state (states left out keep theirs).
+ * Nothing changes unless every pair is understood.
+ */
+export async function applySetup($: EngineInterface, arg: string): Promise<string> {
+  const picks: Partial<Record<AgentState | 'all', string>> = {}
+  for (const pair of arg.split(/\s+/)) {
+    const [key = '', id = ''] = pair.split('=')
+    if (key !== 'all' && !STATES.includes(key as AgentState)) return `Unknown state "${key}": use all, ${STATES.join(', ')}.`
+    if (!BY_ID.has(id)) return `No animation called "${id}". Try /asciimood list.`
+    picks[key as AgentState | 'all'] = id
+  }
+  const { all, ...perState } = picks
+  if (all !== undefined) {
+    await setPrefs($, p => ({ ...p, mode: 'one', one: all }))
+    return `Asciimood: ${BY_ID.get(all)?.name} for everything.`
+  }
+  await setPrefs($, p => ({ ...p, mode: 'auto', perState: { ...p.perState, ...perState } }))
+  return `Asciimood: ${Object.entries(perState).map(([state, id]) => `${LABELS[state as AgentState]} → ${BY_ID.get(id)?.name}`).join(', ')}.`
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const saved = (await $.store.get('prefs')) as Partial<AsciimoodPrefs> | undefined
@@ -343,8 +367,8 @@ export const register: Register = on => {
     now = await read($, agent)
     await $.command.register({
       name: 'asciimood',
-      description: 'Pick the Asciimood animations (or: random, next, prev, pause, tools, list, site, close, <animation>)',
-      argumentHint: '[random|next|prev|pause|tools|list|site|close|<animation>]',
+      description: 'Pick the Asciimood animations (or: random, next, prev, shuffle, pause, tools, list, site, close, <animation>, <state>=<animation>)',
+      argumentHint: '[random|next|prev|shuffle|pause|tools|list|site|close|<animation>|think=<animation> …]',
     })
     $.clock.every(Math.round(1000 / FPS), () => void tick($))
     $.ui.status(LABELS[now.state])
@@ -357,6 +381,11 @@ export const register: Register = on => {
     if (arg === 'site') return { text: `Asciimood's website: ${SITE_URL}` }
     if (arg === 'list') {
       return { text: CATALOG.map(entry => `${entry.id} — ${entry.name} (${entry.by})`).join('\n') }
+    }
+    if (arg.includes('=')) return { text: await applySetup($, arg) }
+    if (arg === 'shuffle') {
+      await setPrefs($, p => ({ ...p, mode: 'shuffle' }))
+      return { text: 'Asciimood: a new animation at each change of state.' }
     }
     if (arg === 'random') await pickRandom($)
     else if (arg === 'next') await step($, 1)
