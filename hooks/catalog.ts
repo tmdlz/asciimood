@@ -140,54 +140,59 @@ export const render = (entry: Entry, t: number, W: number, H: number): Frame => 
   const { meta } = entry.piece
   if (meta.palette === undefined) return shaded(fitInto(frameOf(entry)(t, { paper: false }), W, H), entry, W, H)
 
-  // A coloured scene drawn as pixels, two to a terminal cell: '▀' takes the top
-  // one as its ink and the bottom one as its ground. Each pixel is the mean
-  // colour of the block of scene cells it covers, every glyph weighted by its
-  // ink, nudged toward the block's brightest cell so lights and stars survive.
+  // A coloured scene drawn in braille, as ascii.rest draws it: dots on the
+  // scene's dark ground. A terminal cell holds 2 x 4 dots, so a 120 x 36 pane
+  // has more dots than the scene has cells and none is lost. Each dot is the
+  // scene cell under it; a cell takes the colour of its brightest dot and keeps
+  // only the dots near that brightness, so a lit road never brightens the dim
+  // grid beside it.
   const color = new Uint8Array(meta.cols * meta.rows)
   const lines = frameOf(entry)(t, { paper: false, color }).split('\n')
   const cell = meta.cell ?? 2
-  const PH = H * 2
-  const scale = Math.min(meta.cols / W, (meta.rows * cell) / PH)
-  const ox = (meta.cols - W * scale) / 2
-  const oy = (meta.rows - (PH * scale) / cell) / 2
+  const DW = W * 2, DH = H * 4
+  const scale = Math.min(meta.cols / DW, (meta.rows * cell) / DH)
+  const ox = (meta.cols - DW * scale) / 2
+  const oy = (meta.rows - (DH * scale) / cell) / 2
   const palette = meta.palette.map(hex)
   const ground = meta.ground === undefined ? 0 : hex(meta.ground)
-  const gr = (ground >> 16) & 255, gg = (ground >> 8) & 255, gb = ground & 255
-  const pixel = (px: number, py: number): number => {
-    const r0 = Math.max(0, Math.floor(oy + (py * scale) / cell))
-    const r1 = Math.min(meta.rows, Math.max(r0 + 1, Math.floor(oy + ((py + 1) * scale) / cell)))
-    const c0 = Math.max(0, Math.floor(ox + px * scale))
-    const c1 = Math.min(meta.cols, Math.max(c0 + 1, Math.floor(ox + (px + 1) * scale)))
-    let sr = 0, sg = 0, sb = 0, n = 0, top = -1, tr = gr, tg = gg, tb = gb
-    for (let r = r0; r < r1; r++) {
-      for (let c = c0; c < c1; c++) {
-        const ch = lines[r]?.[c] ?? ' '
-        const k = ch === ' ' ? 0 : 0.35 + 0.65 * (inkOf(ch) / (INK.length - 1))
-        const rgb = palette[color[r * meta.cols + c] ?? 0] ?? ground
-        const cr = gr + (((rgb >> 16) & 255) - gr) * k
-        const cg = gg + (((rgb >> 8) & 255) - gg) * k
-        const cb = gb + ((rgb & 255) - gb) * k
-        sr += cr; sg += cg; sb += cb; n++
-        const lum = cr * 0.3 + cg * 0.59 + cb * 0.11
-        if (lum > top) { top = lum; tr = cr; tg = cg; tb = cb }
-      }
-    }
-    if (n === 0) return ground
-    const mix = (avg: number, hi: number) => Math.round(avg / n + (hi - avg / n) * 0.4)
-    return (mix(sr, tr) << 16) | (mix(sg, tg) << 8) | mix(sb, tb)
-  }
+  const lumOf = (c: number) => ((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11
+  const groundLum = lumOf(ground)
+  // Braille dot bits by [column][row] within a cell.
+  const BITS = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]]
   const chars: string[] = []
   const fg = new Uint32Array(W * H)
-  const bgs = new Uint32Array(W * H)
+  const dotC = new Uint32Array(8)
+  const dotL = new Float64Array(8)
   for (let y = 0; y < H; y++) {
-    chars.push('▀'.repeat(W))
+    let row = ''
     for (let x = 0; x < W; x++) {
-      fg[y * W + x] = pixel(x, y * 2)
-      bgs[y * W + x] = pixel(x, y * 2 + 1)
+      let top = 0, topC = ground, topInk = 0
+      for (let dx = 0; dx < 2; dx++) {
+        for (let dy = 0; dy < 4; dy++) {
+          const k = dx * 4 + dy
+          const c = Math.floor(ox + (x * 2 + dx + 0.5) * scale)
+          const r = Math.floor(oy + ((y * 4 + dy + 0.5) * scale) / cell)
+          const ch = lines[r]?.[c] ?? ' '
+          const rgb = ch === ' ' || c < 0 || c >= meta.cols ? ground : (palette[color[r * meta.cols + c] ?? 0] ?? ground)
+          const l = ch === ' ' ? 0 : Math.max(0, lumOf(rgb) - groundLum) * (0.5 + inkOf(ch) / INK.length)
+          dotC[k] = rgb
+          dotL[k] = l
+          if (l > top) { top = l; topC = rgb; topInk = inkOf(ch) / (INK.length - 1) }
+        }
+      }
+      let bits = 0
+      if (top > 4) {
+        for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 4; dy++) if (dotL[dx * 4 + dy] >= top * 0.55) bits |= BITS[dx]![dy]!
+      }
+      row += bits === 0 ? ' ' : String.fromCharCode(0x2800 + bits)
+      // A small glyph (·) is a faint dot on the website: dim it toward the ground.
+      const k = 0.3 + 0.7 * topInk
+      const mix = (sh: number) => Math.round(((ground >> sh) & 255) + (((topC >> sh) & 255) - ((ground >> sh) & 255)) * k)
+      fg[y * W + x] = (mix(16) << 16) | (mix(8) << 8) | mix(0)
     }
+    chars.push(row)
   }
-  return { chars, fg, bgs, bg: meta.ground === undefined ? undefined : ground }
+  return { chars, fg, bg: meta.ground === undefined ? undefined : ground }
 }
 
 /** How much ink a glyph lays down: a blank least, a full dot or block most. */
