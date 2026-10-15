@@ -115,3 +115,20 @@ test('a setup from the website picks per state, or one for everything', async ($
   const missing = await $.command.run({ command: 'asciimood', args: 'think=nope' })
   expect(missing.text).toContain('No animation called "nope"')
 })
+
+test('a demo plays a session with no model, and stop ends it', async ($, on) => {
+  mock.store(on)
+  const clock = mock.clock(on)
+  const ui = await $.ui.mount({ plugin: 'asciimood', surface: 'terminal', component: 'Pane', requestId: 'asciimood', props: PANE_PROPS })
+  await $.command.run({ command: 'asciimood', args: 'demo' })
+  expect(await ui.find({ type: 'Text', text: 'thinking…' })).toBeDefined()
+  await clock.advance(3600)
+  expect(await ui.find({ type: 'Text', text: 'reading files' })).toBeDefined()
+  await clock.advance(3600)
+  expect(await ui.find({ type: 'Text', text: 'writing code' })).toBeDefined()
+
+  const stopped = await $.command.run({ command: 'asciimood', args: 'stop' })
+  expect(stopped.text).toContain('filming stopped')
+  await clock.advance(10_000)
+  expect(await ui.find({ type: 'Text', text: 'waiting for you' })).toBeDefined()
+})

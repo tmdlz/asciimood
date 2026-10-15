@@ -22,6 +22,23 @@ claude plugin install asciimood --marketplace tmdlz/asciimood
 
 In the desktop app: click + next to the prompt box, then Plugins, Add marketplace with `tmdlz/asciimood`, then Add plugin.
 
+## Updating
+
+```
+claude plugin marketplace update asciimood
+claude plugin update asciimood@asciimood
+```
+
+Then restart Claude Code.
+
+## Filming a demo
+
+These run in the plugin alone: no model call, no tokens.
+
+- `/asciimood demo`: plays a made-up session (thinking, reading, writing, running, an error, done) with your setup.
+- `/asciimood tour`: walks the whole library, 4 seconds each. `/asciimood tour scenes 6` keeps to one shelf, 6 seconds each.
+- `/asciimood stop`: ends it. Sending a real message ends it too.
+
 ## Credits
 
 126 of the animations come from [ascii.rest](https://ascii.rest) by bas3line, under the MIT license: see `hooks/pieces/LICENSE-ascii-rest`. Thank you!

@@ -235,9 +235,19 @@ let playhead = 0
 let lastTick = Date.now()
 let turnStartedAt = Date.now()
 let idleTimer: Timer | undefined
+// Filming: `/asciimood demo` plays a made-up session, `/asciimood tour` walks the
+// library. Both run in the plugin alone (no model, no tokens), leave the person's
+// setup untouched, and stop at `/asciimood stop` or when a real turn starts.
+let reel: Timer | undefined
+let touring: string | undefined
+const DEMO: [AgentState, string, number][] = [
+  ['think', '', 3500], ['read', 'Read Dashboard.tsx', 3500], ['write', 'Edit theme.css', 4000], ['run', 'Bash npm test', 4000],
+  ['error', '1 test failed', 3000], ['think', '', 2500], ['write', 'Edit Dashboard.tsx', 3000], ['run', 'Bash npm test', 3000], ['done', '', 5000],
+]
 const sites = new Map<string, Site>()
 
 const currentId = (): string => {
+  if (touring !== undefined) return touring
   if (chosen.mode === 'one') return chosen.one
   if (chosen.mode === 'shuffle' && shuffled !== undefined) return shuffled
   return chosen.perState[now.state] ?? DEFAULTS[now.state]
@@ -307,6 +317,22 @@ async function setAgent($: EngineInterface, state: AgentState, detail = '') {
   }
 }
 
+function stopReel() {
+  reel?.cancel()
+  reel = undefined
+  touring = undefined
+}
+function playDemo($: EngineInterface, i = 0) {
+  const [state, detail, ms] = wrapAt(DEMO, i)
+  void setAgent($, state, detail)
+  reel = $.clock.after(ms, () => playDemo($, i + 1))
+}
+function playTour($: EngineInterface, list: Entry[], ms: number, i = 0) {
+  touring = wrapAt(list, i).id
+  void setAgent($, now.state, wrapAt(list, i).name)
+  reel = $.clock.after(ms, () => playTour($, list, ms, i + 1))
+}
+
 async function setPrefs($: EngineInterface, change: (p: AsciimoodPrefs) => AsciimoodPrefs) {
   chosen = change(chosen)
   await update($, prefs, () => chosen)
@@ -367,8 +393,8 @@ export const register: Register = on => {
     now = await read($, agent)
     await $.command.register({
       name: 'asciimood',
-      description: 'Pick the Asciimood animations (or: random, next, prev, shuffle, pause, tools, list, site, close, <animation>, <state>=<animation>)',
-      argumentHint: '[random|next|prev|shuffle|pause|tools|list|site|close|<animation>|think=<animation> …]',
+      description: 'Pick the Asciimood animations (or: random, next, prev, shuffle, pause, tools, list, site, close, demo, tour [category] [seconds], stop, <animation>, <state>=<animation>)',
+      argumentHint: '[demo|tour [category] [seconds]|stop|random|next|prev|shuffle|pause|tools|list|site|close|<animation>|think=<animation> …]',
     })
     $.clock.every(Math.round(1000 / FPS), () => void tick($))
     $.ui.status(LABELS[now.state])
@@ -387,7 +413,24 @@ export const register: Register = on => {
       await setPrefs($, p => ({ ...p, mode: 'shuffle' }))
       return { text: 'Asciimood: a new animation at each change of state.' }
     }
-    if (arg === 'random') await pickRandom($)
+    const [verb = '', ...rest] = arg.split(/\s+/)
+    if (verb === 'stop') {
+      stopReel()
+      await setAgent($, 'idle')
+      return { text: 'Asciimood: filming stopped.' }
+    }
+    if (verb === 'demo') {
+      stopReel()
+      playDemo($)
+    }
+    else if (verb === 'tour') {
+      const seconds = Number(rest.find(word => /^\d+(\.\d+)?$/.test(word)) ?? 4)
+      const shelf = rest.find(word => CATEGORIES.includes(word))
+      const list = shelf === undefined ? CATALOG : CATALOG.filter(entry => entry.cat === shelf)
+      stopReel()
+      playTour($, list, Math.max(1, seconds) * 1000)
+    }
+    else if (arg === 'random') await pickRandom($)
     else if (arg === 'next') await step($, 1)
     else if (arg === 'prev') await step($, -1)
     else if (arg === 'pause') await setPrefs($, p => ({ ...p, isPaused: !p.isPaused }))
@@ -420,6 +463,7 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
+      stopReel()
       turnStartedAt = Date.now()
       await setAgent($, 'think')
     }
