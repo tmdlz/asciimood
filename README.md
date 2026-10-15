@@ -36,7 +36,7 @@ Then restart Claude Code.
 These run in the plugin alone: no model call, no tokens.
 
 - `/asciimood demo`: plays a made-up session (thinking, reading, writing, running, an error, done) with your setup.
-- `/asciimood tour`: walks the whole library, 4 seconds each. `/asciimood tour scenes 6` keeps to one shelf, 6 seconds each.
+- `/asciimood tour`: walks the whole library, 4 seconds each. `/asciimood tour scenes 6` keeps to one shelf, 6 seconds each. Add `clean` (`/asciimood tour effects 3 clean`) to hide the controls and frame, so the animation fills the panel.
 - `/asciimood stop`: ends it. Sending a real message ends it too.
 
 ## Credits

@@ -132,3 +132,16 @@ test('a demo plays a session with no model, and stop ends it', async ($, on) => 
   await clock.advance(10_000)
   expect(await ui.find({ type: 'Text', text: 'waiting for you' })).toBeDefined()
 })
+
+test('a clean tour shows the animation alone, filling the pane, and stop brings the picker back', async ($, on) => {
+  host(on)
+  const ui = await $.ui.mount({ plugin: 'asciimood', surface: 'terminal', component: 'Pane', requestId: 'asciimood', props: PANE_PROPS })
+  await $.command.run({ command: 'asciimood', args: 'tour effects 3 clean' })
+  const art = await ui.find({ type: 'Raster', key: 'art' })
+  expect(art?.props?.columns).toBe(80)
+  expect(art?.props?.rows).toBe(30)
+  expect(await ui.find({ type: 'Button', key: 'close' })).toBeUndefined()
+
+  await $.command.run({ command: 'asciimood', args: 'stop' })
+  expect(await ui.find({ type: 'Button', key: 'close' })).toBeDefined()
+})

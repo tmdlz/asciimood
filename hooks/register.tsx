@@ -100,6 +100,12 @@ async function drawPicker($: EngineInterface, els: PickerElements, raster: ((W: 
   chosen = p
 
   const entry = current()
+  // Filming clean: the picture alone, across all the room the layout gives.
+  if (isClean && touring !== undefined) {
+    const W = Math.max(20, Math.min(512, columns))
+    const H = Math.max(6, Math.min(254, rows))
+    return <Box key="clean">{raster !== undefined ? raster(W, H) : <Text key="art">{render(entry, playhead, W, H).chars.join('\n')}</Text>}</Box>
+  }
   const hasSidebar = columns >= 70
   const W = Math.max(20, Math.min(512, (hasSidebar ? columns - SIDEBAR - 2 : columns) - 2))
   // Three rows above (title, actions, shelves), four under (name, note, mode, link), the frame's two.
@@ -240,6 +246,8 @@ let idleTimer: Timer | undefined
 // setup untouched, and stop at `/asciimood stop` or when a real turn starts.
 let reel: Timer | undefined
 let touring: string | undefined
+// `/asciimood tour … clean` hides the picker's controls and frame while the tour plays.
+let isClean = false
 const DEMO: [AgentState, string, number][] = [
   ['think', '', 3500], ['read', 'Read Dashboard.tsx', 3500], ['write', 'Edit theme.css', 4000], ['run', 'Bash npm test', 4000],
   ['error', '1 test failed', 3000], ['think', '', 2500], ['write', 'Edit Dashboard.tsx', 3000], ['run', 'Bash npm test', 3000], ['done', '', 5000],
@@ -321,6 +329,7 @@ function stopReel() {
   reel?.cancel()
   reel = undefined
   touring = undefined
+  isClean = false
 }
 function playDemo($: EngineInterface, i = 0) {
   const [state, detail, ms] = wrapAt(DEMO, i)
@@ -393,8 +402,8 @@ export const register: Register = on => {
     now = await read($, agent)
     await $.command.register({
       name: 'asciimood',
-      description: 'Pick the Asciimood animations (or: random, next, prev, shuffle, pause, tools, list, site, close, demo, tour [category] [seconds], stop, <animation>, <state>=<animation>)',
-      argumentHint: '[demo|tour [category] [seconds]|stop|random|next|prev|shuffle|pause|tools|list|site|close|<animation>|think=<animation> …]',
+      description: 'Pick the Asciimood animations (or: random, next, prev, shuffle, pause, tools, list, site, close, demo, tour [category] [seconds] [clean], stop, <animation>, <state>=<animation>)',
+      argumentHint: '[demo|tour [category] [seconds] [clean]|stop|random|next|prev|shuffle|pause|tools|list|site|close|<animation>|think=<animation> …]',
     })
     $.clock.every(Math.round(1000 / FPS), () => void tick($))
     $.ui.status(LABELS[now.state])
@@ -428,6 +437,7 @@ export const register: Register = on => {
       const shelf = rest.find(word => CATEGORIES.includes(word))
       const list = shelf === undefined ? CATALOG : CATALOG.filter(entry => entry.cat === shelf)
       stopReel()
+      isClean = rest.includes('clean')
       playTour($, list, Math.max(1, seconds) * 1000)
     }
     else if (arg === 'random') await pickRandom($)
