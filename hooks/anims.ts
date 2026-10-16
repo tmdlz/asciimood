@@ -689,6 +689,148 @@ A.hero = (p, W, H) => {
   return s.slice(0, -1);
 };
 
+// Cup of tea: a steaming mug of tea in dense letters, redrawn from a static ASCII "not my cup
+// of tea" mug on Pinterest. Our own shape: a cylinder seen from a little above, lit from the
+// left, sampled 2x2 per cell. Lit glaze is "M", shadow thins to "/:-.", and the silhouette gets
+// edge letters as in hand-made ASCII. Steam rises off it in three wisps and slow rings spread
+// across the tea.
+A.cup = (() => {
+  const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+  // the sketch is 36 x 32 rows (a row is two columns wide), the mug sits on its bottom edge
+  // the rim is drawn thicker front and back than true perspective would, so the lip reads
+  const CX = 16, R = 9.5, K = 0.33, RIM = 12.5, BASE = 28.4, WALL = 1.1, DEPTH = 2.1;
+  const RI = R - WALL, RIY = R * K - 0.85, HX = CX + R - 0.4, HY = 19.6;
+  const LABEL = ["NOT MY", "CUP OF", "TEA"];
+  const TIERS = [".`", "-:", "/+", "+o", "OS", "YH", "DN", "NM", "M"];
+
+  // what lies at (X, Y): [kind, light]. kinds: 0 nothing, 1 glaze (solid), 2 inner wall, 3 tea
+  const at = (X, Y) => {
+    const dx = X - CX, rim = (dx / R) ** 2 + ((Y - RIM) / (R * K)) ** 2;
+    if (rim <= 1) {
+      if ((dx / RI) ** 2 + ((Y - RIM) / RIY) ** 2 > 1) return [1, Y > RIM ? 0.85 : 0.5]; // the rim
+      if ((dx / RI) ** 2 + ((Y - RIM - DEPTH) / RIY) ** 2 <= 1) return [3, 0];
+      const nx = dx / RI; // the far wall, seen from inside: lit on the right
+      return [2, Math.max(0, 0.75 * nx + 0.66 * Math.sqrt(1 - Math.min(1, nx * nx)))];
+    }
+    if (Math.abs(dx) <= R && Y > RIM && ((Y - BASE) / (R * K)) ** 2 + (dx / R) ** 2 <= 1 || Math.abs(dx) <= R && Y > RIM && Y <= BASE) {
+      const nx = dx / R, nz = Math.sqrt(1 - Math.min(1, nx * nx));
+      const lit = Math.max(0, -0.75 * nx + 0.66 * nz) * (1 - 0.25 * smooth(RIM + 4, BASE + 3, Y));
+      return [1, 0.22 + 0.78 * lit];
+    }
+    if (X > CX + R - 0.3) { // the handle, a loop on the shadow side
+      const ro = Math.hypot((X - HX) / 5.2, (Y - HY) / 6.4), ri = Math.hypot((X - HX) / 2.9, (Y - HY) / 3.9);
+      if (ro <= 1 && ri >= 1) {
+        const t = (1 - ro) / (1 - ro + ri - 1 + 1e-6);
+        return [1, 0.3 + 0.45 * Math.sin(Math.PI * t) * (0.8 - 0.2 * (Y - HY) / 6.4)];
+      }
+    }
+    return [0, 0];
+  };
+
+  // steam: three wisps whose bends and puffs travel up, one turn of 2πp each
+  const steam = (X, Y, p) => {
+    const base = RIM - 0.5, top = 0.5;
+    const h = (base - Y) / (base - top);
+    if (h <= 0 || h >= 1) return [0, 0];
+    let best = 0, slope = 0;
+    for (const [off, ph, ph2, k] of [[-0.38, 0, 1.1, 0.8], [0.02, 2.1, 3.7, 1], [0.4, 4.2, 5.3, 0.8]]) {
+      const amp = 0.3 + 2 * h, w = 0.45 + 0.6 * h, a = Y * 0.45 + TAU * p + ph;
+      const xc = CX + off * R * (1 - 0.3 * h) + amp * Math.sin(a);
+      const puff = 0.5 + 0.5 * Math.sin(Y * 0.7 + 2 * TAU * p + ph2);
+      const d = Math.exp(-(((X - xc) / w) ** 2)) * smooth(0, 0.12, h) * (1 - h) ** 0.9 * (0.55 + 0.45 * puff) * 1.9 * k;
+      if (d > best) { best = d; slope = amp * 0.45 * Math.cos(a); }
+    }
+    return [best, slope];
+  };
+
+  return (p, W, H) => {
+    const sc = Math.min(H / 32, W / 2 / 36); // rows per sketch unit
+    const ox = W / 2 - 18 * 2 * sc, oy = H - 32 * sc;
+    const toX = (q) => (q - ox) / (2 * sc), toY = (r) => (r - oy) / sc;
+    // the label: a dark window on the lit side of the body, if there is room for it
+    const lw = 8, lh = LABEL.length + 2;
+    const lq = Math.round(ox + (CX - R * 0.32) * 2 * sc - lw / 2), lr = Math.round(oy + (RIM + BASE) / 2 * sc - lh / 2 + 0.5);
+    const showLabel = R * 4 * sc >= 26 && (BASE - RIM) * sc >= lh + 4;
+    // the row (in cells) where the far half of an ellipse crosses column q, or NaN
+    const top = (q, rx, ry, cy) => {
+      const u = (toX(q + 0.5) - CX) / rx;
+      return Math.abs(u) >= 1 ? NaN : oy + (cy - ry * Math.sqrt(1 - u * u)) * sc;
+    };
+    // a curve's letter in this cell, picked by where it crosses the cell and how steep it runs
+    const arcChar = (q, r, rx, ry, cy, wave) => {
+      const y = top(q, rx, ry, cy);
+      if (!(y >= r && y < r + 1)) return null;
+      const s = top(q + 0.5, rx, ry, cy) - top(q - 0.5, rx, ry, cy), f = y - r;
+      if (Math.abs(s) > 0.7) return s < 0 ? "/" : "\\";
+      if (wave) return Math.abs(s) > 0.3 ? "." : "~";
+      return f < 0.3 ? (s < -0.15 ? "'" : s > 0.15 ? "`" : "-") : f < 0.55 ? "-" : f < 0.8 ? "." : "_";
+    };
+    const arcs = (q, r) => {
+      const outer = arcChar(q, r, R, R * K, RIM);
+      if (outer) return outer;
+      if (top(q, R, R * K, RIM) >= r) return null; // above the outer lip: steam, or nothing
+      const inner = arcChar(q, r, RI, RIY, RIM);
+      if (inner) return inner;
+      const wy = toY(top(q, RI, RIY, RIM + DEPTH)), dx = toX(q + 0.5) - CX;
+      const water = (dx / RI) ** 2 + ((wy - RIM) / RIY) ** 2 < 1 ? arcChar(q, r, RI, RIY, RIM + DEPTH, true) : null;
+      if (water) return water;
+      const [kind] = at(toX(q + 0.5), toY(r + 0.5));
+      if (toY(r + 0.5) >= RIM) return null;
+      return kind === 2 || kind === 1 ? (hash(q, r, 3) < 0.25 ? "." : " ") : null; // the far wall, faint
+    };
+    const g = [];
+    for (let r = 0; r < H; r++) {
+      let line = "";
+      for (let q = 0; q < W; q++) {
+        if (showLabel && q >= lq && q < lq + lw && r >= lr && r < lr + lh) {
+          const s = LABEL[r - lr - 1], i = q - lq - 1;
+          line += s && i >= 0 && i < 6 ? (s.padEnd(6)[i] || " ") : " ";
+          continue;
+        }
+        const v = [];
+        for (const [i, j] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) v.push(at(toX(q + i), toY(r + j)));
+        const [tl, tr, bl, br] = v.map((a) => a[0] === 1), n = tl + tr + bl + br, h = hash(q, r, 5);
+        const cy = toY(r + 0.5);
+        let ch = " ";
+        // the far half of the opening is drawn as curves, the hand-made way ("_.-'''-._"):
+        // the outer lip, the inner lip under it, and the waterline of the tea
+        const lip = cy < RIM + DEPTH && Math.abs(toX(q + 0.5) - CX) < R * 0.86 ? arcs(q, r) : null;
+        if (lip !== null) ch = lip;
+        else if (n === 4) {
+          const lit = (v[0][1] + v[1][1] + v[2][1] + v[3][1]) / 4;
+          const tier = TIERS[Math.max(0, Math.min(TIERS.length - 1, Math.floor((lit + (h - 0.5) * 0.1) * TIERS.length)))];
+          ch = tier[Math.floor(hash(q, r, 9) * tier.length)];
+        } else if (n === 3) ch = !tl ? "d" : !tr ? "b" : !bl ? "?" : "7";
+        else if (n === 2) {
+          if (tl && tr) ch = cy > BASE ? "`" : h < 0.7 ? "'" : "`";
+          else if (bl && br) ch = h < 0.6 ? "," : h < 0.85 ? "." : "_";
+          else if (tl && bl) ch = h < 0.6 ? ":" : "!";
+          else if (tr && br) ch = h < 0.6 ? "j" : "(";
+          else ch = tl ? "\\" : "/";
+        } else if (n === 1) ch = tl || tr ? "'" : ".";
+        else {
+          const X = toX(q + 0.5), Y = toY(r + 0.5), [kind, lit] = at(X, Y);
+          if (kind === 3) { // rings on the tea, spreading out twice a loop
+            const rr = Math.hypot((X - CX) / RI, (Y - RIM - DEPTH) / RIY);
+            ch = rr < 0.85 && Math.sin(rr * 9 - 2 * TAU * p) > 0.8 ? (rr < 0.2 ? "o" : "~") : " ";
+          } else if (kind === 2) {
+            ch = lit > 0.55 && h < 0.25 ? "." : " ";
+          } else {
+            const [d, slope] = steam(X, Y, p);
+            if (d > 0.7) ch = slope > 0.5 ? "\\" : slope < -0.5 ? "/" : slope > 0 ? ")" : "(";
+            else if (d > 0.45) ch = slope > 0.5 ? "\\" : slope < -0.5 ? "/" : ":";
+            else if (d > 0.25) ch = h < 0.6 ? "." : "`";
+          }
+        }
+        line += ch;
+      }
+      g.push(line);
+    }
+    return g.join("\n");
+  };
+})();
+
 // Pseudo-random dissolve between two frames (used for state transitions).
 A.dissolve = (from, to, k) => {
   let o = "";
