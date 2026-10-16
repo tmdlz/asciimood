@@ -31,6 +31,7 @@ export const CATALOG: Entry[] = [
   { id: 'lava', name: 'Lava lamp', note: 'wax blobs rising and sinking', hues: [15, 350], dur: 10 },
   { id: 'wire-cube', anim: 'cube', name: 'Cube', note: 'a wireframe cube tumbling', hues: [60, 100], dur: 8 },
   { id: 'gull', name: 'Gull', note: 'a gull head-on, gliding, then three wingbeats', hues: [195, 225], dur: 6 },
+  { id: 'horse', name: 'Horse', note: "Muybridge's 1878 gallop, in ASCII", hues: [25, 45], dur: 1.5 },
   { id: 'hero', name: 'ASCIIMOOD', note: 'the name, filled with plasma', hues: [30, 350], dur: 8 },
 ]
 

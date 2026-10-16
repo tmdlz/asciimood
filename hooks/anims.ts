@@ -3,6 +3,7 @@
 // and the size W x H, returning H lines of W characters. Every time term uses
 // whole turns of TAU * p, so frame(0) and frame(1) are the same picture.
 export type Anim = (p: number, W: number, H: number) => string
+import { FOOTAGE } from './footage.ts'
 
 const TAU = Math.PI * 2;
 const RAMP = " .:-=+*#%@";
@@ -311,6 +312,69 @@ A.gull = (p, W, H) => {
   }
   return s.slice(0, -1);
 };
+
+// Footage: a real clip (built by tools/footage/build.mjs) drawn in ASCII. Each
+// cell is cut into 4x8 sub-pixels of the frame's ink, and gets the character
+// whose own ink is shaped most like them; a fixed pick among the near-best
+// gives the mixed-letter texture. Frames are worked out once per size.
+const unpack = (s, n) => {
+  const q = new Uint8Array(n);
+  for (let i = 0, k = 0; k < s.length; ) {
+    if (s[k] === ".") { const e = s.indexOf(";", k); i += parseInt(s.slice(k + 1, e), 36); k = e + 1; }
+    else q[i++] = parseInt(s[k++], 16);
+  }
+  return q;
+};
+const reels = {};
+const footage = (id) => (p, W, H) => {
+  const clip = FOOTAGE.clips[id];
+  if (!clip) return out(grid(W, H));
+  const [SX, SY] = FOOTAGE.sub, cells = SX * SY;
+  let reel = reels[id];
+  if (!reel) {
+    const n = FOOTAGE.chars.length, shapes = new Float32Array(n * cells);
+    for (let i = 0; i < shapes.length; i++) shapes[i] = parseInt(FOOTAGE.shapes[i], 16) / 15;
+    reel = reels[id] = { frames: clip.frames.map((s) => unpack(s, clip.w * clip.h)), shapes, size: "", drawn: [] };
+  }
+  if (reel.size !== W + "x" + H) { reel.size = W + "x" + H; reel.drawn = []; }
+  const k = Math.floor(p * clip.frames.length) % clip.frames.length;
+  if (reel.drawn[k]) return reel.drawn[k];
+  const f = reel.frames[k], cw = Math.max(clip.w / (W * 0.94), clip.h / (H * 0.92 * 2));
+  const ox = (W - clip.w / cw) / 2, oy = (H - clip.h / cw / 2) / 2;
+  const ink = (x, y) => {
+    x -= 0.5; y -= 0.5;
+    const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+    const at = (a, b) => (a < 0 || b < 0 || a >= clip.w || b >= clip.h ? 0 : f[b * clip.w + a] / 15);
+    return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy;
+  };
+  const v = new Float32Array(cells), best = [[0, 0], [0, 0], [0, 0]];
+  let s = "";
+  for (let r = 0; r < H; r++) {
+    for (let q = 0; q < W; q++) {
+      let sum = 0;
+      for (let sy = 0; sy < SY; sy++) for (let sx = 0; sx < SX; sx++) {
+        const a = ink((q - ox + (sx + 0.5) / SX) * cw, (r - oy + (sy + 0.5) / SY) * cw * 2) * 0.62;
+        v[sy * SX + sx] = a; sum += a;
+      }
+      const mean = sum / cells;
+      if (mean < 0.04) { s += " "; continue; }
+      best[0][0] = best[1][0] = best[2][0] = Infinity;
+      for (let g = 0; g < FOOTAGE.chars.length; g++) {
+        let e = 0;
+        for (let i = 0, o = g * cells; i < cells; i++) { const t = v[i] - reel.shapes[o + i]; e += t * t; }
+        if (e < best[2][0]) { best[2] = [e, g]; best.sort((a, b) => a[0] - b[0]); }
+      }
+      const near = best.filter(([e]) => e <= best[0][0] * 1.25 + 0.03);
+      s += FOOTAGE.chars[near[Math.floor(hash(q, r, 77) * near.length)][1]];
+    }
+    s += "\n";
+  }
+  return (reel.drawn[k] = s.slice(0, -1));
+};
+
+// A horse at full gallop: Eadweard Muybridge's The Horse in Motion (1878),
+// public domain, fifteen photographs a stride.
+A.horse = footage("horse");
 
 // Hero: the word ASCIIMOOD filled with plasma over a dim field.
 const FONT = {
