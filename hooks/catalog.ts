@@ -42,6 +42,7 @@ export const CATALOG: Entry[] = [
   { id: 'cup-of-tea', anim: 'cup', name: 'Cup of tea', note: 'a steaming mug of tea in dense letters, rings spreading on the tea', hues: [0, 0], ink: 0xece8df, ground: 0x0b0b0e, dur: 6 },
   { id: 'vortex', name: 'Vortex', note: 'a whirlpool from above, bright crescents sliding round its rings', hues: [0, 0], ink: 0xc4c4c8, ground: 0x060607, dur: 8 },
   { id: 'yellow-blobs', anim: 'blobs', name: 'Yellow blobs', note: 'yellow lava-lamp blobs on black, merging and splitting, ringed by dotted contours', hues: [0, 0], ink: 0xf4d31f, ground: 0x0a0a08, dur: 8 },
+  { id: 'chompers', name: 'Chompers', note: 'glowing fanged mouths in the dark, each snapping shut on its own beat', hues: [0, 0], ink: 0x47ff7a, ground: 0x070a1c, dur: 4 },
   { id: 'hero', name: 'ASCIIMOOD', note: 'the name, filled with plasma', hues: [30, 350], dur: 8 },
 ]
 

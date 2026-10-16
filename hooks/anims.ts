@@ -935,6 +935,89 @@ A.blobs = (() => {
   };
 })();
 
+// Chompers: glowing fanged mouths in the dark, redrawn from a stop-motion GIF on Pinterest.
+// Each snaps shut and slowly gapes open again on its own beat. Teeth are triangles laid
+// along a curved gum line; the lower row sits half a tooth over so the jaws interlock.
+// Each cell is cut into 4x8 sub-samples and drawn with "#" when full, a slash on a
+// tooth's sides ("\##/" above, "/##\" below) and "V" / "A" at its tip.
+A.chompers = (() => {
+  const ss = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+  const frac = (x) => x - Math.floor(x);
+  // How open a jaw is over one bite: snaps shut, holds, gapes slowly, holds.
+  const gape = (q) => (q < 0.1 ? 1 - ss(q / 0.1) : q < 0.2 ? 0 : q < 0.62 ? ss((q - 0.2) / 0.42) : 1);
+
+  // x, y: centre as a share of the frame; w: tooth width (share of the short side);
+  // n: upper teeth; long: tooth length / width; tilt: degrees; curve: grin;
+  // k: bites per loop; ph: where in its bite it starts.
+  const MOUTHS = [
+    { x: 0.27, y: 0.26, w: 0.115, n: 4, long: 1.3, tilt: -7, curve: 0.5, k: 2, ph: 0.0 },
+    { x: 0.79, y: 0.27, w: 0.09, n: 3, long: 1.8, tilt: 14, curve: 0.35, k: 2, ph: 0.4 },
+    { x: 0.25, y: 0.74, w: 0.1, n: 3, long: 1.4, tilt: 12, curve: 0.4, k: 2, ph: 0.2 },
+    { x: 0.74, y: 0.74, w: 0.115, n: 4, long: 1.3, tilt: -10, curve: 0.55, k: 2, ph: 0.6 },
+  ];
+
+  return (p, W, H) => {
+    const SW = W, SH = H * 2, S = Math.min(SW, SH); // square units: a cell is 1 wide, 2 tall
+    const live = MOUTHS.map((m, mi) => {
+      const q = frac(m.k * p + m.ph), o = gape(q);
+      const w = m.w * S, L = w * m.long;
+      const bite = q < 0.2 ? Math.sin((q / 0.2) * Math.PI) : 0; // a jolt as it bites
+      const a = ((m.tilt + 4 * Math.sin(TAU * (p + m.ph))) * Math.PI) / 180;
+      const D = L * 1.3 + o * (L * 0.55 + w * 0.5); // gum to gum
+      const half = (m.n * w) / 2;
+      const teeth = [];
+      for (let row = 0; row < 2; row++) {
+        const n = row ? m.n - 1 : m.n;
+        for (let i = 0; i < n; i++) {
+          const xc = -((n * w) / 2) + (i + 0.5) * w;
+          const len = L * (row ? 0.85 : 1) * (0.78 + 0.4 * hash(mi, i, row + 3));
+          const gum = (row ? D / 2 : -D / 2) - m.curve * w * (xc / half) ** 2; // corners up: a grin
+          teeth.push({ xc, gum, len, dir: row ? -1 : 1 });
+        }
+      }
+      const step = Math.floor(p * 48) % 48; // stop-motion boil, 12 nudges a second
+      return {
+        cx: m.x * SW + (hash(mi, step, 1) - 0.5) * 0.5, cy: m.y * SH + w * 0.35 * bite + (hash(mi, step, 2) - 0.5) * 0.6,
+        ca: Math.cos(a), sa: Math.sin(a), w, teeth,
+        r: half + D / 2 + L + m.curve * w + 2,
+      };
+    });
+    // the tooth under a point: its direction (1 upper, points down; -1 lower),
+    // which side of its centre line the point is on (-1 left, 1 right) and
+    // how far from the gum towards the tip (0 to 1)
+    let dir = 0, side = 0, depth = 0;
+    const at = (x, y) => {
+      for (const M of live) {
+        const dx = x - M.cx, dy = y - M.cy;
+        if (Math.abs(dx) > M.r || Math.abs(dy) > M.r) continue;
+        const u = dx * M.ca + dy * M.sa, v = -dx * M.sa + dy * M.ca;
+        for (const T of M.teeth) {
+          const t = ((v - T.gum) * T.dir) / T.len;
+          if (t < 0 || t > 1) continue;
+          if (Math.abs(u - T.xc) <= M.w * 0.39 * (1 - t)) { dir = T.dir; side = u < T.xc ? -1 : 1; depth = t; return true; }
+        }
+      }
+      return false;
+    };
+    let s = "";
+    for (let r = 0; r < H; r++) {
+      for (let c = 0; c < W; c++) {
+        let n = 0, d = 0, e = 0, z = 0;
+        for (let sy = 0; sy < 8; sy++) for (let sx = 0; sx < 4; sx++)
+          if (at(c + (sx + 0.5) / 4, r * 2 + (sy + 0.5) / 4)) { n++; d += dir; e += side; z += depth; }
+        const m = n / 32;
+        if (m < 0.12) s += " ";
+        else if (m > 0.72) s += "#";
+        else if (z < n * 0.15) s += m > 0.4 ? "#" : " "; // along the gum: a flat base, no slashes
+        else if (Math.abs(e) < n * 0.5) s += d > 0 ? "V" : "A"; // a tip: both sides in one cell
+        else s += (d > 0) === (e < 0) ? "\\" : "/";
+      }
+      s += "\n";
+    }
+    return s.slice(0, -1);
+  };
+})();
+
 // Pseudo-random dissolve between two frames (used for state transitions).
 A.dissolve = (from, to, k) => {
   let o = "";
