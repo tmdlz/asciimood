@@ -883,6 +883,58 @@ A.vortex = (() => {
   };
 })();
 
+// Yellow blobs: lava-lamp islands on black, redrawn from a Pinterest motion piece. Each blob
+// has three tiers: a solid core, a cross-hatched rim and a dotted contour further out. They
+// orbit their own spots and breathe, so they melt into each other and part again.
+A.blobs = (() => {
+  // its own hash, so the blobs keep the layout they were validated with
+  const bhash = (a, b, c) => {
+    let h = (a * 374761393 + b * 668265263 + c * 1274126177) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+
+  return (p, W, H) => {
+    const t = p * TAU;
+    const S = W / 4.5; // blob spacing: about four and a half across
+    const nx = Math.ceil(W / S) + 2, ny = Math.ceil((H * 2) / (S * 0.87)) + 2;
+    // one blob per lattice cell, each orbiting its own spot (1 or 2 turns per loop) and breathing
+    const blobs = [];
+    for (let j = -2; j < ny; j++) for (let i = -2; i < nx; i++) {
+      const h = (s) => bhash(i, j, s);
+      const n = 1 + Math.floor(h(3) * 2), dir = h(4) < 0.5 ? -1 : 1, ph = h(5) * TAU;
+      const orbit = S * (0.3 + 0.35 * h(6));
+      const R = S * (0.56 + 0.32 * h(7)) * (1 + 0.14 * Math.sin(t * (3 - n) + h(8) * TAU));
+      blobs.push({
+        // staggered rows so the blobs never line up into horizontal bands
+        x: (i + 0.5 * (j & 1) + 0.1 + 0.8 * h(1)) * S + orbit * Math.cos(dir * n * t + ph),
+        y: (j * 0.87 + 0.1 + 0.8 * h(2)) * S + orbit * Math.sin(dir * n * t + ph),
+        r2: R * R,
+      });
+    }
+    const lines = [];
+    for (let y = 0; y < H; y++) {
+      let row = "";
+      for (let x = 0; x < W; x++) {
+        // y is doubled because cells are twice as tall as wide
+        let f = 0;
+        for (const b of blobs) {
+          const dx = x + 0.5 - b.x, dy = (y + 0.5) * 2 - b.y, q = 1 - (dx * dx + dy * dy) / b.r2;
+          if (q > 0) f += q * q * q;
+        }
+        let c = " ";
+        if (f > 0.6) c = "#";
+        else if (f > 0.3) c = "+";
+        // a dot-matrix halo floating outside the rim, with black between them
+        else if (f > 0.006 && f < 0.075 && (x + y) % 2 === 0) c = ".";
+        row += c;
+      }
+      lines.push(row);
+    }
+    return lines.join("\n");
+  };
+})();
+
 // Pseudo-random dissolve between two frames (used for state transitions).
 A.dissolve = (from, to, k) => {
   let o = "";
