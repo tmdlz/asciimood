@@ -1018,6 +1018,72 @@ A.chompers = (() => {
   };
 })();
 
+// Digit globe: a sphere of digits turning on a tilted axis, redrawn from a GIF on Pinterest,
+// with a crease that gathers the digits into a bright seam as it rolls round.
+// Calm: a slow turn, a lattice spaced so digits never share a cell, each digit fixed
+// to its point, and the limb fades digit -> dot -> nothing.
+A.globe = (() => {
+  const DIG = "0123456789";
+  const TILT = 0.42, LEAN = 0.32; // axis tipped towards us, then leaned right
+  const ct = Math.cos(TILT), st = Math.sin(TILT), cl = Math.cos(LEAN), sl = Math.sin(LEAN);
+
+  return (p, W, H) => {
+    const t = (p - 0.27) * TAU; // the crease faces us a little before the poster frame
+    const R = Math.min(W * 0.46, H * 0.92); // radius in columns; rows are half that
+    const cx = (W - 1) / 2, cy = (H - 1) / 2;
+    const g = grid(W, H);
+    const z = new Float32Array(W * H).fill(-9);
+    // a point of the sphere (latitude, longitude) -> cell and depth
+    const at = (lat, lon) => {
+      const cL = Math.cos(lat), x = cL * Math.sin(lon + t), y = -Math.sin(lat), zz = cL * Math.cos(lon + t);
+      // tip the axis towards the viewer, then lean it
+      let y2 = y * ct - zz * st;
+      const z2 = y * st + zz * ct, x2 = x * cl - y2 * sl;
+      y2 = x * sl + y2 * cl;
+      const X = Math.round(cx + x2 * R), Y = Math.round(cy + y2 * R * 0.5);
+      return X < 0 || Y < 0 || X >= W || Y >= H ? null : { X, Y, z: z2 };
+    };
+    const plot = (q, c, depth) => {
+      const k = q.Y * W + q.X;
+      if (depth > z[k]) { z[k] = depth; g[q.Y][q.X] = c; }
+    };
+    // the surface: a lattice of digits, rings two rows apart and points ~4 columns apart,
+    // with a clear lane either side of the crease
+    const LAT = 4 / R, LON = 4 / R;
+    const rings = Math.floor(Math.PI / LAT), lane = 7 / R;
+    for (let i = 1; i < rings; i++) {
+      const lat = -Math.PI / 2 + i * (Math.PI / rings);
+      const n = Math.max(1, Math.round((TAU * Math.cos(lat)) / LON));
+      for (let j = 0; j < n; j++) {
+        const lon = ((j + hash(i, 7)) / n) * TAU;
+        if (Math.abs(Math.sin(lon / 2)) * 2 < lane) continue;
+        const q = at(lat, lon);
+        if (!q) continue;
+        const r = hash(i, j, 9);
+        if (r > 0.84) continue; // a fixed sparse subset, never chosen by depth
+        // fade at the limb: digit, then a dot, then gone; far side only a faint dust
+        const edge = 0.18 + 0.2 * hash(i, j, 5);
+        if (q.z > edge) plot(q, DIG[Math.floor(hash(i, j, 3) * 10)], q.z);
+        else if (q.z > edge - 0.22 || (q.z < -0.35 && r < 0.12)) plot(q, ".", q.z);
+      }
+    }
+    // the crease: a ridge of packed digits along one meridian, three strands,
+    // samples one row apart so each digit keeps its own cell; strands stay a fixed
+    // width apart and stop short of the poles, where they would bunch up
+    const fine = 2.1 / R; // a cell is 1 x 2 columns: samples 2.1 apart each way never share one
+    for (let s = -1; s <= 1; s++) {
+      for (let i = 1, m = Math.floor(Math.PI / fine); i < m; i++) {
+        const lat = -Math.PI / 2 + i * fine;
+        if (Math.abs(lat) > 1.25) continue;
+        const q = at(lat, (s * fine) / Math.cos(lat));
+        if (!q || q.z < 0.18) continue;
+        plot(q, q.z > 0.3 ? DIG[Math.floor(hash(i, s + 5, 11) * 10)] : ".", q.z + 2);
+      }
+    }
+    return out(g);
+  };
+})();
+
 // Pseudo-random dissolve between two frames (used for state transitions).
 A.dissolve = (from, to, k) => {
   let o = "";
