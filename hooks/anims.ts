@@ -417,6 +417,101 @@ A.dotcat = (p, W, H) => {
   return out.slice(0, -1);
 };
 
+// Bolt: a thick lightning bolt turning on its vertical axis, redrawn from a Pinterest clip
+// of a spinning ASCII bolt. Our own zigzag outline extruded into a slab, ray-marched as a
+// distance field and sampled 2x2 per cell: faces in "0"s thinning to "=:." away from the
+// light, the thickness in "|1" strokes. It leans back, so its edge shows as a slanted sliver.
+A.bolt = (() => {
+  // the bolt outline, y up, centred on the origin
+  const POLY = [[0.1, 1], [0.62, 1], [0.22, 0.2], [0.55, 0.2], [-0.3, -1], [-0.02, -0.12], [-0.4, -0.12]]
+    .map(([x, y]) => [x - 0.1, y]);
+  const HALF = 0.11; // half the slab's thickness
+
+  // signed distance to the outline (negative inside)
+  const poly2 = (x, y) => {
+    let d = Infinity, s = 1;
+    for (let i = 0, j = POLY.length - 1; i < POLY.length; j = i++) {
+      const [ax, ay] = POLY[i], [bx, by] = POLY[j];
+      const ex = bx - ax, ey = by - ay, wx = x - ax, wy = y - ay;
+      const t = Math.max(0, Math.min(1, (wx * ex + wy * ey) / (ex * ex + ey * ey)));
+      d = Math.min(d, (wx - ex * t) ** 2 + (wy - ey * t) ** 2);
+      const c1 = y >= ay, c2 = y < by, c3 = ex * wy > ey * wx;
+      if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
+    }
+    return s * Math.sqrt(d);
+  };
+  const bolt = (x, y, z) => {
+    const dx = poly2(x, y), dz = Math.abs(z) - HALF;
+    return Math.min(Math.max(dx, dz), 0) + Math.hypot(Math.max(dx, 0), Math.max(dz, 0));
+  };
+
+  const CAP = [".", ":", "=", "o", "0", "0"], SIDE = [".", ":", "|", "1", "1", "I"];
+  const L = (() => { const v = [-0.45, 0.45, -0.77], n = Math.hypot(...v); return v.map((c) => c / n); })();
+  const PITCH = 0.1, LEAN = -0.45; // top tipped away from the viewer, the face up to the light
+
+  return (p, W, H) => {
+    const yaw = TAU * (p - 0.3), c = Math.cos(yaw), s = Math.sin(yaw), cp = Math.cos(PITCH), sp = Math.sin(PITCH);
+    const cl = Math.cos(LEAN), sl = Math.sin(LEAN);
+    const sc = Math.min((H * 0.94) / 2.25, (W * 0.95) / 2.6); // rows per unit
+    // world -> the bolt's own frame: undo the camera tilt, the turn, then the lean
+    const toBolt = (X, Y, Z) => {
+      const y = cp * Y - sp * Z, z = sp * Y + cp * Z, x1 = c * X + s * z, z1 = -s * X + c * z;
+      return [x1, cl * y - sl * z1, sl * y + cl * z1];
+    };
+    const toWorld = (x, y, z) => {
+      const y1 = cl * y + sl * z, z1 = -sl * y + cl * z, X = c * x - s * z1, z2 = s * x + c * z1;
+      return [X, cp * y1 + sp * z2, -sp * y1 + cp * z2];
+    };
+    // one sample: null for nothing, else { lit, side }
+    const sample = (X, Y) => {
+      if (X * X + Y * Y > 1.6) return null;
+      let t = 0;
+      for (let i = 0; i < 64; i++) {
+        const [bx, by, bz] = toBolt(X, Y, -3 + t);
+        const d = bolt(bx, by, bz);
+        if (d < 0.002) {
+          const e = 0.004, k = [[1, -1, -1], [-1, -1, 1], [-1, 1, -1], [1, 1, 1]];
+          let nx = 0, ny = 0, nz = 0;
+          for (const [a, b, g] of k) { const v = bolt(bx + a * e, by + b * e, bz + g * e); nx += a * v; ny += b * v; nz += g * v; }
+          const nl = Math.hypot(nx, ny, nz);
+          const side = Math.abs(nz / nl) < 0.7;
+          const [wx, wy, wz] = toWorld(nx / nl, ny / nl, nz / nl);
+          const lit = 0.15 + 0.85 * Math.max(0, wx * L[0] + wy * L[1] + wz * L[2]);
+          return { lit, side };
+        }
+        t += d;
+        if (t > 6) break;
+      }
+      return null;
+    };
+    let out = "";
+    for (let r = 0; r < H; r++) {
+      for (let q = 0; q < W; q++) {
+        const v = [];
+        for (const [i, j] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]])
+          v.push(sample((q + i - W / 2) / (2 * sc), -(r + j - H / 2) / sc));
+        const [tl, tr, bl, br] = v.map((a) => a !== null), n = tl + tr + bl + br, h = hash(q, r, 5);
+        let ch = " ";
+        if (n === 4) {
+          const lit = (v[0].lit + v[1].lit + v[2].lit + v[3].lit) / 4, side = v.filter((a) => a.side).length >= 2;
+          const tiers = side ? SIDE : CAP;
+          ch = tiers[Math.max(0, Math.min(tiers.length - 1, Math.floor((lit + (h - 0.5) * 0.04) * (tiers.length - 1))))];
+        } else if (n === 3) ch = !tl ? "/" : !tr ? "\\" : !bl ? "\\" : "/";
+        else if (n === 2) {
+          if (tl && tr) ch = "'";
+          else if (bl && br) ch = h < 0.6 ? "." : ",";
+          else if (tl && bl) ch = ":";
+          else if (tr && br) ch = ":";
+          else ch = tl ? "\\" : "/";
+        } else if (n === 1) ch = tl || tr ? "'" : ".";
+        out += ch;
+      }
+      out += "\n";
+    }
+    return out.slice(0, -1);
+  };
+})();
+
 // Hero: the word ASCIIMOOD filled with plasma over a dim field.
 const FONT = {
   K: ["#   #", "#  # ", "# #  ", "##   ", "# #  ", "#  # ", "#   #"],
