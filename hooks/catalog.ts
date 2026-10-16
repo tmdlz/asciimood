@@ -40,6 +40,7 @@ export const CATALOG: Entry[] = [
   { id: 'bolt', name: 'Bolt', note: 'a thick, leaning lightning bolt making one full turn on its axis', hues: [0, 0], ink: 0xeeece6, ground: 0x0b0b0e, dur: 6 },
   { id: 'heart', name: 'Heart', note: 'a heart with two eyes, beating lub-dub while it looks around and blinks', hues: [0, 0], ink: 0xf2efe8, ground: 0x0b0a0a, dur: 6 },
   { id: 'cup-of-tea', anim: 'cup', name: 'Cup of tea', note: 'a steaming mug of tea in dense letters, rings spreading on the tea', hues: [0, 0], ink: 0xece8df, ground: 0x0b0b0e, dur: 6 },
+  { id: 'vortex', name: 'Vortex', note: 'a whirlpool from above, bright crescents sliding round its rings', hues: [0, 0], ink: 0xc4c4c8, ground: 0x060607, dur: 8 },
   { id: 'hero', name: 'ASCIIMOOD', note: 'the name, filled with plasma', hues: [30, 350], dur: 8 },
 ]
 

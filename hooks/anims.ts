@@ -831,6 +831,58 @@ A.cup = (() => {
   };
 })();
 
+// Vortex: a whirlpool seen from above, redrawn from a Pinterest picture. Rings of dim dots,
+// each carrying bright crescents that slide round, the inner ones faster. The rings sway a
+// little as it turns.
+A.vortex = (() => {
+  const BRIGHT = "#@%#";
+
+  // rings from the centre out: inner and outer radius, crescents (arc centre in turns,
+  // half-length in turns), and turns per loop
+  const RINGS = [
+    { r0: 0.15, r1: 0.32, k: 3, arcs: [[0.10, 0.27]] },
+    { r0: 0.42, r1: 0.62, k: 2, arcs: [[0.55, 0.25]] },
+    { r0: 0.72, r1: 0.94, k: 2, arcs: [[0.95, 0.21], [0.42, 0.09]] },
+    { r0: 1.04, r1: 1.28, k: 1, arcs: [[0.30, 0.23]] },
+    { r0: 1.38, r1: 1.64, k: 1, arcs: [[0.75, 0.20], [0.22, 0.09]] },
+    { r0: 1.74, r1: 2.10, k: 1, arcs: [[0.45, 0.25]] },
+  ];
+
+  return (p, W, H) => {
+    const t = p * TAU, R = Math.min(W / 2, H) * 0.98;
+    let s = "";
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const X = (x + 0.5 - W / 2) / R, Y = ((y + 0.5 - H / 2) * 2) / R;
+        const a = Math.atan2(Y, X);
+        // the rings sway: a slow three-lobed wobble that turns with the water
+        const r = Math.hypot(X, Y) * (1 + 0.035 * Math.sin(3 * a - 2 * t));
+        let c = " ";
+        if (r < 0.07) c = "@";
+        for (const ring of RINGS) {
+          if (r < ring.r0 || r > ring.r1) continue;
+          const w = ring.r1 - ring.r0;
+          // the swirl: angle drifts with radius, breathing once a loop
+          const turn = a / TAU - ring.k * p + 0.12 * r * Math.sin(t);
+          let lit = false;
+          for (const [mid, half] of ring.arcs) {
+            const d = Math.abs((((turn - mid) % 1) + 1.5) % 1 - 0.5);
+            if (d >= half) continue;
+            const f = Math.sqrt(1 - (d / half) ** 2); // thick in the middle, tapering to points
+            if (r > ring.r1 - w * f) { lit = true; break; }
+          }
+          if (lit) c = BRIGHT[Math.floor(hash(x, y, 1) * BRIGHT.length)];
+          else c = (x + 2 * y) % 4 === 0 ? ":" : "."; // the dim water, a faint even weave
+          break;
+        }
+        s += c;
+      }
+      s += "\n";
+    }
+    return s.slice(0, -1);
+  };
+})();
+
 // Pseudo-random dissolve between two frames (used for state transitions).
 A.dissolve = (from, to, k) => {
   let o = "";
