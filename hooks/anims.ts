@@ -1084,6 +1084,50 @@ A.globe = (() => {
   };
 })();
 
+// Radiation: the trefoil warning sign, redrawn in code (a dark disc with three windows and a
+// hollow hub, our own proportions), hazard-yellow ink on black. It turns a third of a turn per
+// loop (the sign has 3-fold symmetry, so the loop is seamless) while two light pulses run out
+// from the hub through the ink. Cells are sampled 2x4 so edges fade "@#*=:." cleanly.
+A.radiation = (() => {
+  const RING = 0.84, HUB_OUT = 0.31, HUB_IN = 0.19, WIN = Math.PI / 6; // window half-angle 30°
+
+  // Is the point (in units of the disc radius, angle already turned) ink?
+  const ink = (r, a) => {
+    if (r > 1) return false;
+    if (r >= RING) return true;                      // outer ring
+    if (r < HUB_IN) return false;                    // hollow centre
+    if (r < HUB_OUT) return true;                    // hub ring
+    const d = Math.abs((((a % (TAU / 3)) + TAU / 3) % (TAU / 3)) - TAU / 6);
+    return d >= WIN;                                 // the three windows
+  };
+
+  return (p, W, H) => {
+    const R = Math.min(W / 2, H) * 0.9, cx = W / 2, cy = H / 2;
+    const turn = (TAU / 3) * p + Math.PI / 6; // windows start at bottom, upper left, upper right
+    let s = "";
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let cov = 0;
+        for (let j = 0; j < 4; j++) for (let i = 0; i < 2; i++) {
+          const px = (x + 0.25 + i * 0.5 - cx) / R, py = ((y + 0.125 + j * 0.25 - cy) * 2) / R;
+          if (ink(Math.hypot(px, py), Math.atan2(py, px) - turn)) cov++;
+        }
+        cov /= 8;
+        let c = " ";
+        if (cov >= 1) {
+          // a pulse leaves the hub twice per loop and runs out through the ink as a lighter band
+          const r = Math.hypot((x + 0.5 - cx) / R, ((y + 0.5 - cy) * 2) / R);
+          const k = ((2 * p - (r - 0.2) / 0.85) % 0.5 + 0.5) % 0.5; // 0 at the front, grows inward
+          c = k < 0.035 ? ":" : k < 0.075 ? "=" : k < 0.12 ? "*" : "@";
+        } else if (cov > 0) c = RAMP[Math.max(1, Math.min(8, Math.round(cov * 9)))];
+        s += c;
+      }
+      s += "\n";
+    }
+    return s.slice(0, -1);
+  };
+})();
+
 // Pseudo-random dissolve between two frames (used for state transitions).
 A.dissolve = (from, to, k) => {
   let o = "";
