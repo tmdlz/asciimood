@@ -15,6 +15,10 @@ export type Entry = {
   anim?: string
   /** Seconds per loop. */
   dur: number
+  /** One 0xRRGGBB ink for every character, in place of the hues. */
+  ink?: number
+  /** A 0xRRGGBB ground behind the picture, in place of the terminal's. */
+  ground?: number
 }
 
 export const CATALOG: Entry[] = [
@@ -32,6 +36,8 @@ export const CATALOG: Entry[] = [
   { id: 'wire-cube', anim: 'cube', name: 'Cube', note: 'a wireframe cube tumbling', hues: [60, 100], dur: 8 },
   { id: 'gull', name: 'Gull', note: 'a gull head-on, gliding, then three wingbeats', hues: [195, 225], dur: 6 },
   { id: 'horse', name: 'Horse', note: "Muybridge's 1878 gallop, in ASCII", hues: [25, 45], dur: 1.5 },
+  { id: 'black-cat', anim: 'dotcat', name: 'Black cat', note: 'a black cat in dots on paper, blinking', hues: [0, 0], ink: 0x161514, ground: 0xf1ede4, dur: 4 },
+  { id: 'white-cat', anim: 'dotcat', name: 'White cat', note: 'a white cat in dots, blinking', hues: [0, 0], ink: 0xf3f0e9, dur: 4 },
   { id: 'hero', name: 'ASCIIMOOD', note: 'the name, filled with plasma', hues: [30, 350], dur: 8 },
 ]
 
@@ -67,10 +73,10 @@ const shaded = (chars: string[], entry: Entry, W: number, H: number): Frame => {
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const k = (x / W) * 0.6 + (y / H) * 0.4
-      fg[y * W + x] = hsl(h1 + (h2 - h1) * k, 0.75, 0.68)
+      fg[y * W + x] = entry.ink ?? hsl(h1 + (h2 - h1) * k, 0.75, 0.68)
     }
   }
-  return { chars, fg }
+  return { chars, fg, bg: entry.ground }
 }
 
 /** The picture `entry` shows `t` seconds in, sized W x H. */

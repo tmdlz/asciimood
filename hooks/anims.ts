@@ -376,6 +376,47 @@ const footage = (id) => (p, W, H) => {
 // public domain, fifteen photographs a stride.
 A.horse = footage("horse");
 
+// A cat face-on, drawn as a lattice of dots like a dot-matrix print: each cell
+// holds two dots, one above the other (":", or "˙" / "." for one), so any font draws it.
+// Shapes are laid out in a 720x900 sketch and scaled to fit, sitting on the
+// bottom edge. It blinks once a loop; nothing else moves.
+const ellipse = (x, y, cx, cy, rx, ry) => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1;
+const tri = (x, y, [ax, ay], [bx, by], [cx, cy]) => {
+  const s = (px, py, qx, qy, rx, ry) => (px - rx) * (qy - ry) - (qx - rx) * (py - ry);
+  const d1 = s(x, y, ax, ay, bx, by), d2 = s(x, y, bx, by, cx, cy), d3 = s(x, y, cx, cy, ax, ay);
+  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+};
+const nearLine = (x, y, ax, ay, bx, by, w) => {
+  const dx = bx - ax, dy = by - ay, u = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(x - ax - u * dx, y - ay - u * dy) <= w;
+};
+A.dotcat = (p, W, H) => {
+  const open = Math.min(1, Math.abs(p - 0.6) / 0.035); // one blink: 1 open, 0 shut
+  const DW = W, DH = H * 2, s = Math.min((DW * 0.92) / 640, (DH * 0.96) / 800);
+  const ox = DW / 2 - 392 * s, oy = DH - 900 * s;
+  const cat = (x, y) => {
+    for (const [cx, cy, rx, pd] of [[283, 437, 68, 30], [510, 437, 62, -20]]) {
+      const ry = Math.max(9, 52 * open); // shut, a slit stays
+      if (ellipse(x, y, cx, cy, rx, ry)) return open > 0.4 && ellipse(x, y, cx + pd, cy - 4, 20, 30); // eye white, pupil
+    }
+    if (y >= 285 && y <= 640 && x >= 140 && x <= 612) return true; // head
+    if (tri(x, y, [245, 100], [148, 300], [348, 300]) || tri(x, y, [515, 100], [418, 300], [607, 300])) return true; // ears
+    if (y >= 620 && tri(x, y, [250, 620], [140, 905], [500, 620]) || tri(x, y, [500, 620], [140, 905], [548, 905])) return true; // body
+    for (const [ax, ay, bx, by] of [[82, 518, 150, 518], [82, 568, 150, 550], [112, 612, 152, 588], [622, 512, 702, 512], [622, 550, 706, 568], [622, 588, 666, 612]])
+      if (nearLine(x, y, ax, ay, bx, by, 7)) return true; // whiskers
+    return false;
+  };
+  let out = "";
+  for (let r = 0; r < H; r++) {
+    for (let q = 0; q < W; q++) {
+      const top = cat((q + 0.5 - ox) / s, (r * 2 + 0.5 - oy) / s), bottom = cat((q + 0.5 - ox) / s, (r * 2 + 1.5 - oy) / s);
+      out += top ? (bottom ? ":" : "˙") : bottom ? "." : " ";
+    }
+    out += "\n";
+  }
+  return out.slice(0, -1);
+};
+
 // Hero: the word ASCIIMOOD filled with plasma over a dim field.
 const FONT = {
   K: ["#   #", "#  # ", "# #  ", "##   ", "# #  ", "#  # ", "#   #"],
