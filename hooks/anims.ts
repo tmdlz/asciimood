@@ -272,6 +272,46 @@ A.cat = (p, W, H) => {
   return out(g);
 };
 
+// A gull seen head-on, wings in an M, drawn in dense letters that thin out
+// to dots at the edges. It glides, beats its wings three times, glides again.
+const PLUMAGE = [".,'`", ":;i!r", "vucxzJ7L", "YZUCOPSk", "BMOG8EQ0", "@B&W%#M"];
+A.gull = (p, W, H) => {
+  const t = p * TAU, env = (1 - Math.cos(t)) / 2, beat = Math.sin(3 * t) * env;
+  const S = Math.min(W * 0.46, H * 1.8), U = Math.min(S * 0.22, H * 0.34);
+  const cx = W / 2, cy = H * 0.5 - U * 0.12 * env * Math.cos(3 * t);
+  const elbow = 0.45 + 0.3 * beat, tip = -0.5 + 0.75 * Math.sin(3 * t - 0.7) * env;
+  const step = Math.floor(p * 24);
+  let s = "";
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const side = Math.abs(x - cx) / S;
+      let v = 0;
+      if (side <= 1) {
+        // centre line of the wing, in rows above the body (positive is up)
+        const k = (side - 0.42) / 0.58;
+        const lift = side < 0.42 ? elbow * Math.sin(side / 0.42 * Math.PI / 2) : elbow + (tip - elbow) * k ** 1.4;
+        const th = U * 0.8 * (1 - side) ** 0.9 + 0.9;
+        const mid = cy - lift * U + th * 0.15;
+        const d = (y - mid) / (y < mid ? th * 0.4 : th * 0.8); // feathers hang below
+        v = Math.max(0, 1 - Math.abs(d) ** 1.6) * (1 - side ** 4);
+        // ragged trailing edge
+        if (d > 0.4) v *= 0.55 + 0.45 * hash(x, y, 9);
+      }
+      // body and head
+      const bx = (x - cx) / (S * 0.1), by = (y - cy - U * 0.05) / (U * 0.45);
+      v = Math.max(v, 1 - Math.hypot(bx, by));
+      const hx = (x - cx) / (S * 0.05), hy = (y - cy + U * 0.42) / (U * 0.2);
+      v = Math.max(v, (1 - Math.hypot(hx, hy)) * 1.2);
+      if (v <= 0.04) { s += " "; continue; }
+      const tier = Math.max(0, Math.min(5, Math.floor((v + (hash(x, y, 4) - 0.5) * 0.25) * 6.5)));
+      const set = PLUMAGE[tier];
+      s += set[Math.floor(hash(x, y, step) * set.length)];
+    }
+    s += "\n";
+  }
+  return s.slice(0, -1);
+};
+
 // Hero: the word ASCIIMOOD filled with plasma over a dim field.
 const FONT = {
   K: ["#   #", "#  # ", "# #  ", "##   ", "# #  ", "#  # ", "#   #"],
