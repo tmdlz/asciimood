@@ -326,8 +326,8 @@ const unpack = (s, n) => {
   return q;
 };
 const reels = {};
-const footage = (id) => (p, W, H) => {
-  const clip = FOOTAGE.clips[id];
+const footage = (id, data = FOOTAGE) => (p, W, H) => {
+  const FOOTAGE = data, clip = FOOTAGE.clips[id];
   if (!clip) return out(grid(W, H));
   const [SX, SY] = FOOTAGE.sub, cells = SX * SY;
   let reel = reels[id];

@@ -36,7 +36,6 @@ export const CATALOG: Entry[] = [
   { id: 'wire-cube', anim: 'cube', name: 'Cube', note: 'a wireframe cube tumbling', hues: [60, 100], dur: 8 },
   { id: 'gull', name: 'Gull', note: 'a gull head-on, gliding, then three wingbeats', hues: [195, 225], dur: 6 },
   { id: 'horse', name: 'Horse', note: "Muybridge's 1878 gallop, in ASCII", hues: [25, 45], dur: 1.5 },
-  { id: 'black-cat', anim: 'dotcat', name: 'Black cat', note: 'a black cat in dots on paper, blinking', hues: [0, 0], ink: 0x161514, ground: 0xf1ede4, dur: 4 },
   { id: 'white-cat', anim: 'dotcat', name: 'White cat', note: 'a white cat in dots, blinking', hues: [0, 0], ink: 0xf3f0e9, dur: 4 },
   { id: 'hero', name: 'ASCIIMOOD', note: 'the name, filled with plasma', hues: [30, 350], dur: 8 },
 ]
