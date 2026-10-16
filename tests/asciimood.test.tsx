@@ -1,20 +1,28 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-/** What the engine answers beneath the plugin in a session: preferences and the clock. */
-const host = (on: On) => {
-  mock.store(on)
-  mock.clock(on)
+/** What the engine answers beneath the plugin in a session: preferences, the clock, and asciimood.com. */
+const host = (on: On, setup: unknown = undefined) => {
+  mock.store(on, { device: '0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43' })
+  const clock = mock.clock(on)
+  mock.env(on, {})
+  const asked: string[] = []
+  on('http.fetch', async (_, e) => {
+    asked.push(e.url)
+    return {
+      value: setup === undefined
+        ? { status: 404, ok: false, headers: {}, text: '{}' }
+        : { status: 200, ok: true, headers: {}, text: JSON.stringify({ setup }) },
+    }
+  })
+  const opened: string[][] = []
+  on('process.run', async (_, e) => {
+    opened.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  return { clock, asked, opened }
 }
 
-const PANE_PROPS = {
-  title: 'Asciimood',
-  isFocused: true,
-  bodyColumns: 80,
-  placement: 'dock' as const,
-  scroll: { offset: 0, bodyRows: 30 },
-  view: {},
-}
 const ROW = {
   tool_use_id: 'toolu_1',
   tool: 'Bash',
@@ -23,33 +31,76 @@ const ROW = {
   isErrored: false,
   isInterrupted: false,
 }
+const SPINNER = {
+  plugin: 'asciimood',
+  surface: 'terminal',
+  component: 'Spinner',
+  requestId: 'main',
+  props: { word: 'Doodling', message: null, suffix: '…', mode: 'tool-use' },
+  viewport: { columns: 100, rows: 40 },
+} as const
 
-test('the picker draws the animation and changes it on a press', async ($, on) => {
+test('while a turn runs, the animation fills the window above the prompt', async ($, on) => {
   host(on)
-  const ui = await $.ui.mount({ plugin: 'asciimood', surface: 'terminal', component: 'Pane', requestId: 'asciimood', props: PANE_PROPS })
-  expect(await ui.find({ type: 'Raster', key: 'art' })).toBeDefined()
-  expect(await ui.find({ type: 'Link' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'close' })).toBeDefined()
-
-  const playing = async () => (await ui.find({ type: 'Text', text: /^› / }))?.text
-  const before = await playing()
-  await ui.press({ key: 'next' })
-  expect(await playing()).not.toBe(before)
-
-  await ui.press({ key: 'mode-one' })
-  await ui.press({ key: 'cat-scenes' })
-  await ui.press({ key: 'down' })
-  await ui.press({ key: 'anim-tokyo-rain' })
-  expect(await playing()).toBe('› Tokyo rain')
-  expect(await ui.find({ type: 'Text', text: /neon signs/ })).toBeDefined()
+  const ui = await $.ui.mount(SPINNER)
+  const art = await ui.find({ type: 'Raster', key: 'art' })
+  expect(art?.props?.columns).toBe(96)
+  expect(art?.props?.rows).toBe(30)
+  expect(await ui.find({ type: 'Text', text: /\/asciimood to change/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ' asciimood ' })).toBeDefined()
 })
 
-test('a tool call folds into one quiet line', async $ => {
+test('the animation follows what the agent does', async ($, on) => {
+  host(on)
+  on('tool.call', async (_, e) =>
+    e.tool === 'Bash' ? { result: 'boom', text: 'boom', isError: true } : { result: 'ok', text: 'ok' })
+  const ui = await $.ui.mount(SPINNER)
+  await $.tool.call({ tool: 'Edit', tool_use_id: 'toolu_3', input: { file_path: '/x/theme.css', old_string: 'a', new_string: 'b' } })
+  expect(await ui.find({ type: 'Text', text: 'writing code' })).toBeDefined()
+
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_4', input: { command: 'npm test' } })
+  expect(await ui.find({ type: 'Text', text: 'hit an error' })).toBeDefined()
+})
+
+test('/asciimood opens this device\'s page on asciimood.com and picks up what is saved there', async ($, on) => {
+  const { clock, asked, opened } = host(on, { mode: 'one', one: 'fire', perState: {}, isHidingTools: true })
+  const said = await $.command.run({ command: 'asciimood', args: '' })
+  expect(said.text).toContain('https://asciimood.com/setup/#d=0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43')
+  expect(opened[0]).toEqual(['open', 'https://asciimood.com/setup/#d=0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43'])
+
+  await clock.advance(3_500)
+  expect(asked).toContain('https://asciimood.com/api/setup/0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43')
+  const ui = await $.ui.mount(SPINNER)
+  expect(await ui.find({ type: 'Text', text: /Fire/ })).toBeDefined()
+})
+
+test('a setup from the website is checked: unknown animations keep their defaults', async ($, on) => {
+  const { clock } = host(on, { mode: 'auto', perState: { think: 'not-a-thing', write: 'fire' }, isHidingTools: false })
+  on('ui.render', { component: 'ToolUse' }, async $ => {
+    const { Text } = $.ui.resolve({ surface: 'terminal', component: 'ToolUse' })
+    return <Text>engine row</Text>
+  })
+  await $.command.run({ command: 'asciimood', args: '' })
+  await clock.advance(3_500)
+  // isHidingTools false: the engine draws the row in full.
+  const row = await $.ui.mount({ plugin: 'asciimood', surface: 'terminal', component: 'ToolUse', requestId: 'toolu_9', props: ROW })
+  expect(await row.find({ type: 'Text', text: 'engine row' })).toBeDefined()
+})
+
+test('the old setup lines are gone: the website is the only place to choose', async ($, on) => {
+  host(on)
+  const said = await $.command.run({ command: 'asciimood', args: 'think=fire' })
+  expect(said.text).toContain('set up on the website')
+})
+
+test('a tool call folds into one quiet line', async ($, on) => {
+  host(on)
   const ui = await $.ui.mount({ plugin: 'asciimood', surface: 'terminal', component: 'ToolUse', requestId: 'toolu_1', props: ROW })
-  expect((await ui.find({ type: 'Text', text: /Bash npm test/ }))).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Bash npm test/ })).toBeDefined()
 })
 
 test('a failed call shows in full', async ($, on) => {
+  host(on)
   on('ui.render', { component: 'ToolUse' }, async $ => {
     const { Text } = $.ui.resolve({ surface: 'terminal', component: 'ToolUse' })
     return <Text>engine row</Text>
@@ -58,39 +109,26 @@ test('a failed call shows in full', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: 'engine row' })).toBeDefined()
 })
 
-test('the animation follows what the agent does', async ($, on) => {
-  host(on)
-  on('tool.call', async (_, e) =>
-    e.tool === 'Bash' ? { result: 'boom', text: 'boom', isError: true } : { result: 'ok', text: 'ok' })
-  const ui = await $.ui.mount({ plugin: 'asciimood', surface: 'terminal', component: 'Pane', requestId: 'asciimood', props: PANE_PROPS })
-  await $.tool.call({ tool: 'Edit', tool_use_id: 'toolu_3', input: { file_path: '/x/theme.css', old_string: 'a', new_string: 'b' } })
-  expect(await ui.find({ type: 'Text', text: 'writing code' })).toBeDefined()
-
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_4', input: { command: 'npm test' } })
-  expect(await ui.find({ type: 'Text', text: 'hit an error' })).toBeDefined()
-})
-
-test('while a turn runs, the animation takes the working line', async ($, on) => {
-  host(on)
+test('a demo plays a session with no model on the stage, and stop ends it', async ($, on) => {
+  const { clock } = host(on)
+  await $.command.run({ command: 'asciimood', args: 'demo' })
   const ui = await $.ui.mount({
     plugin: 'asciimood',
     surface: 'terminal',
-    component: 'Spinner',
-    requestId: 'main',
-    props: { word: 'Doodling', message: null, suffix: '…', mode: 'tool-use' },
-    viewport: { columns: 100, rows: 40 },
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 50, bodyColumns: 120, scroll: { offset: 0, bodyRows: 49 }, view: {} },
   })
-  const art = await ui.find({ type: 'Raster', key: 'art' })
-  expect(art?.props?.columns).toBe(96)
-  expect(art?.props?.rows).toBe(20)
-  expect(await ui.find({ type: 'Text', text: /\/asciimood to change/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: ' asciimood ' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'thinking…' })).toBeDefined()
+  await clock.advance(3600)
+  expect(await ui.find({ type: 'Text', text: 'reading files' })).toBeDefined()
+
+  const stopped = await $.command.run({ command: 'asciimood', args: 'stop' })
+  expect(stopped.text).toContain('filming stopped')
 })
 
-test('on the main screen the picker fills the band above the prompt', async ($, on) => {
+test('a clean tour shows the animation alone, filling the stage', async ($, on) => {
   host(on)
-  const said = await $.command.run({ command: 'asciimood', args: '' })
-  expect(JSON.stringify(said)).toContain('above the prompt')
+  await $.command.run({ command: 'asciimood', args: 'tour 3 clean' })
   const ui = await $.ui.mount({
     plugin: 'asciimood',
     surface: 'terminal',
@@ -98,50 +136,7 @@ test('on the main screen the picker fills the band above the prompt', async ($, 
     props: { hasSurvey: false, isWorking: false, maxRows: 50, bodyColumns: 120, scroll: { offset: 0, bodyRows: 49 }, view: {} },
   })
   const art = await ui.find({ type: 'Raster', key: 'art' })
-  expect(art?.props?.rows).toBe(40)
-  expect(await ui.find({ type: 'Button', key: 'close' })).toBeDefined()
-})
-
-test('a setup from the website picks per state, or one for everything', async ($, on) => {
-  host(on)
-  const per = await $.command.run({ command: 'asciimood', args: 'think=wire-cube write=fire' })
-  expect(JSON.stringify(per)).toContain('thinking… → Cube, writing code → Fire')
-
-  const all = await $.command.run({ command: 'asciimood', args: 'all=sleeping-cat' })
-  expect(JSON.stringify(all)).toContain('Sleeping cat for everything')
-
-  const bad = await $.command.run({ command: 'asciimood', args: 'think=wire-cube nap=fire' })
-  expect(bad.text).toContain('Unknown state "nap"')
-  const missing = await $.command.run({ command: 'asciimood', args: 'think=nope' })
-  expect(missing.text).toContain('No animation called "nope"')
-})
-
-test('a demo plays a session with no model, and stop ends it', async ($, on) => {
-  mock.store(on)
-  const clock = mock.clock(on)
-  const ui = await $.ui.mount({ plugin: 'asciimood', surface: 'terminal', component: 'Pane', requestId: 'asciimood', props: PANE_PROPS })
-  await $.command.run({ command: 'asciimood', args: 'demo' })
-  expect(await ui.find({ type: 'Text', text: 'thinking…' })).toBeDefined()
-  await clock.advance(3600)
-  expect(await ui.find({ type: 'Text', text: 'reading files' })).toBeDefined()
-  await clock.advance(3600)
-  expect(await ui.find({ type: 'Text', text: 'writing code' })).toBeDefined()
-
-  const stopped = await $.command.run({ command: 'asciimood', args: 'stop' })
-  expect(stopped.text).toContain('filming stopped')
-  await clock.advance(10_000)
-  expect(await ui.find({ type: 'Text', text: 'waiting for you' })).toBeDefined()
-})
-
-test('a clean tour shows the animation alone, filling the pane, and stop brings the picker back', async ($, on) => {
-  host(on)
-  const ui = await $.ui.mount({ plugin: 'asciimood', surface: 'terminal', component: 'Pane', requestId: 'asciimood', props: PANE_PROPS })
-  await $.command.run({ command: 'asciimood', args: 'tour effects 3 clean' })
-  const art = await ui.find({ type: 'Raster', key: 'art' })
-  expect(art?.props?.columns).toBe(80)
-  expect(art?.props?.rows).toBe(30)
-  expect(await ui.find({ type: 'Button', key: 'close' })).toBeUndefined()
-
-  await $.command.run({ command: 'asciimood', args: 'stop' })
-  expect(await ui.find({ type: 'Button', key: 'close' })).toBeDefined()
+  expect(art?.props?.columns).toBe(120)
+  expect(art?.props?.rows).toBe(49)
+  expect(await ui.find({ type: 'Text', text: ' asciimood ' })).toBeUndefined()
 })

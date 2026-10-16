@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { BoxProps, ButtonProps, ElementConstructor, EngineInterface, LinkProps, Register, RenderChildren, TextProps, Timer } from 'claude-code'
+import type { BoxProps, ElementConstructor, EngineInterface, RasterProps, Register, RenderChildren, TextProps, Timer } from 'claude-code'
 
-import { BY_ID, CATALOG, CATEGORIES, DEFAULTS, dissolve, render, toCells } from './catalog.ts'
+import { BY_ID, CATALOG, DEFAULTS, dissolve, render, toCells } from './catalog.ts'
 import type { Entry, Frame } from './catalog.ts'
 import type { AgentState, AsciimoodAgent, AsciimoodPrefs, AsciimoodView } from '../types'
 
@@ -9,16 +9,19 @@ const PANE = 'asciimood'
 const FPS = 15
 const FADE_MS = 450
 const DONE_TO_IDLE_MS = 45_000
-// How tall the picker asks to open above the prompt: the picture and its controls.
-// The picker asks for as much room as the layout spares; the dock, the width beside a narrow transcript.
+// The stage (filming) asks for as much room as the layout spares.
 const PANE_ROWS = 200
-const SIDEBAR = 24
 const SITE_URL = 'https://asciimood.com'
+// The setup is chosen on the website and read back from it: every few seconds
+// for a while after `/asciimood` opens the page, else now and then.
+const FAST_POLL_MS = 3_000
+const FAST_POLL_FOR_MS = 10 * 60_000
+const SLOW_POLL_MS = 10 * 60_000
 
-const INITIAL_PREFS: AsciimoodPrefs = { mode: 'auto', one: 'sleeping-cat', perState: {}, isPaused: false, isHidingTools: true }
+const INITIAL_PREFS: AsciimoodPrefs = { mode: 'auto', one: DEFAULTS.idle, perState: {}, isHidingTools: true }
 const agent = atom({ plugin: 'asciimood', key: 'agent' } as const, { state: 'idle', detail: '' } as AsciimoodAgent)
 const prefs = atom({ plugin: 'asciimood', key: 'prefs' } as const, INITIAL_PREFS)
-const view = atom({ plugin: 'asciimood', key: 'view' } as const, { cat: '', offset: 0 } as AsciimoodView)
+const view = atom({ plugin: 'asciimood', key: 'view' } as const, {} as AsciimoodView)
 
 const LABELS: Record<AgentState, string> = {
   idle: 'waiting for you',
@@ -38,6 +41,7 @@ const STATE_COLORS: Record<AgentState, string> = {
   error: '#f87171',
   done: '#fdba74',
 }
+const STATES = Object.keys(LABELS) as AgentState[]
 const READS = new Set(['Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch', 'ToolSearch'])
 const WRITES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 const THINKS = new Set(['Agent', 'Task', 'TodoWrite'])
@@ -62,12 +66,13 @@ const elapsed = (ms: number): string => {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
+type Els = { Box: ElementConstructor<BoxProps>; Text: ElementConstructor<TextProps> }
+
 /**
  * The picture in a rounded frame with `asciimood` set into its top edge, as on
  * the website; the frame turns red while Claude is stuck on an error.
  */
-function framed(els: { Box: ElementConstructor<BoxProps>; Text: ElementConstructor<TextProps> }, picture: RenderChildren, W: number, state: AgentState) {
-  const { Box, Text } = els
+function framed({ Box, Text }: Els, picture: RenderChildren, W: number, state: AgentState) {
   return (
     <Box key="frame" borderStyle="round" borderColor={state === 'error' ? '#f87171' : '#4a4652'} flexDirection="column">
       {picture}
@@ -78,157 +83,19 @@ function framed(els: { Box: ElementConstructor<BoxProps>; Text: ElementConstruct
   )
 }
 
-type PickerElements = {
-  Box: ElementConstructor<BoxProps>
-  Text: ElementConstructor<TextProps>
-  Button: ElementConstructor<ButtonProps>
-  Link: ElementConstructor<LinkProps>
-}
-const ACCENT = '#f0a24a'
-
-/**
- * The picker, after ascii.rest: shelves across the top, the shelf's pieces
- * down the left, the piece large on the right with its name and what it shows.
- * Sized to `columns` x `rows`; `raster` draws the live picture at a size.
- */
-async function drawPicker($: EngineInterface, els: PickerElements, raster: ((W: number, H: number) => RenderChildren) | undefined, columns: number, rows: number, hint: string) {
-  const { Box, Text, Button, Link } = els
-  const { state, detail } = await read($, agent)
-  const p = await read($, prefs)
-  const v = await read($, view)
-  now = { state, detail }
-  chosen = p
-
-  const entry = current()
-  // Filming clean: the picture alone, across all the room the layout gives.
-  if (isClean && touring !== undefined) {
-    const W = Math.max(20, Math.min(512, columns))
-    const H = Math.max(6, Math.min(254, rows))
-    return <Box key="clean">{raster !== undefined ? raster(W, H) : <Text key="art">{render(entry, playhead, W, H).chars.join('\n')}</Text>}</Box>
-  }
-  const hasSidebar = columns >= 70
-  const W = Math.max(20, Math.min(512, (hasSidebar ? columns - SIDEBAR - 2 : columns) - 2))
-  // Three rows above (title, actions, shelves), four under (name, note, mode, link), the frame's two.
-  const H = Math.max(6, Math.min(254, rows - 9))
-
-  // The shelf shown: the one browsed, else the playing piece's own.
-  const cat = CATEGORIES.includes(v.cat) ? v.cat : entry.cat
-  const shelf = CATALOG.filter(one => one.cat === cat)
-  const room = Math.max(3, H)
-  let offset = Math.min(v.offset, Math.max(0, shelf.length - room))
-  const at = shelf.findIndex(one => one.id === entry.id)
-  // Following the playing piece (no shelf picked by hand): keep it in view.
-  if (v.cat === '' && at >= 0 && (at < offset || at >= offset + room)) offset = Math.max(0, Math.min(at - 1, shelf.length - room))
-  const scrollTo = (n: number) => update($, view, w => ({ ...w, cat, offset: Math.max(0, Math.min(n, shelf.length - room)) }))
-  const close = async () => {
-    await update($, view, w => ({ ...w, isOpen: false }))
-    await $.ui.close({ id: PANE })
-  }
-  const action = (key: string, hotkey: string, label: string, onPress: () => unknown, color?: string) => (
-    <Button key={key} plain hotkey={hotkey} onPress={onPress}>
-      <Text color={color}>{label}</Text>
-    </Button>
-  )
-
-  const title = (
-    <Box key="title" justifyContent="space-between">
-      <Box columnGap={2}>
-        <Text bold color={ACCENT}>asciimood</Text>
-        <Text dimColor>{`${CATALOG.length} pieces · Claude is ${LABELS[state]}${p.isPaused ? ' · paused' : ''}`}</Text>
-      </Box>
-      <Text dimColor>{hint}</Text>
-    </Box>
-  )
-  const actions = (
-    <Box key="actions" columnGap={3}>
-      {action('prev', 'a', '◀ prev', () => step($, -1))}
-      {action('next', 'd', 'next ▶', () => step($, 1))}
-      {action('random', 'r', 'random', () => pickRandom($), ACCENT)}
-      {action('pause', 'p', p.isPaused ? 'play' : 'pause', () => setPrefs($, q => ({ ...q, isPaused: !q.isPaused })))}
-      {action('tools', 't', p.isHidingTools ? 'show code' : 'hide code', () => setPrefs($, q => ({ ...q, isHidingTools: !q.isHidingTools })))}
-      {action('close', 'x', '× close', close, 'red')}
-    </Box>
-  )
-  const shelves = (
-    <Box key="shelves" columnGap={2} flexWrap="wrap">
-      {CATEGORIES.map(one => (
-        <Button key={`cat-${one}`} plain onPress={() => update($, view, w => ({ ...w, cat: one, offset: 0 }))}>
-          <Text color={one === cat ? ACCENT : undefined} bold={one === cat} dimColor={one !== cat}>
-            {`${one} ${CATALOG.filter(x => x.cat === one).length}`}
-          </Text>
-        </Button>
-      ))}
-    </Box>
-  )
-
-  const visible = shelf.slice(offset, offset + room)
-  const sidebar = (
-    <Box key="list" flexDirection="column" width={SIDEBAR} paddingTop={1}>
-      {offset > 0 && (
-        <Button key="up" plain onPress={() => scrollTo(offset - room)}>
-          <Text dimColor>{`  ▲ ${offset} more`}</Text>
-        </Button>
-      )}
-      {visible.map(one => (
-        <Button key={`anim-${one.id}`} plain onPress={() => choose($, one.id)}>
-          {one.id === entry.id ? (
-            <Text color={ACCENT} bold>{`› ${one.name}`.slice(0, SIDEBAR)}</Text>
-          ) : (
-            <Text>{`  ${one.name}`.slice(0, SIDEBAR)}</Text>
-          )}
-        </Button>
-      ))}
-      {offset + room < shelf.length && (
-        <Button key="down" plain onPress={() => scrollTo(offset + room)}>
-          <Text dimColor>{`  ▼ ${shelf.length - offset - room} more`}</Text>
-        </Button>
-      )}
-    </Box>
-  )
-
-  const modes: [AsciimoodPrefs['mode'], string][] = [['auto', 'one per state'], ['one', 'same for all'], ['shuffle', 'shuffle']]
-  const caption = (
-    <Box key="caption" flexDirection="column">
-      <Box columnGap={2}>
-        <Text bold>{entry.name}</Text>
-        <Text dimColor>{entry.piece !== undefined ? `${entry.by} · MIT` : entry.by}</Text>
-      </Box>
-      <Text dimColor>{entry.note}</Text>
-      <Box columnGap={1}>
-        <Text dimColor>mode</Text>
-        {modes.map(([value, label]) => (
-          <Button key={`mode-${value}`} plain onPress={() => setPrefs($, q => ({ ...q, mode: value, one: currentId() }))}>
-            <Text color={p.mode === value ? ACCENT : undefined} dimColor={p.mode !== value}>{`[${label}]`}</Text>
-          </Button>
-        ))}
-        <Text dimColor>{p.mode === 'auto' ? `· your pick plays while Claude is ${LABELS[state]}` : ''}</Text>
-      </Box>
-      <Box columnGap={1}>
-        <Text dimColor>more animations and packs:</Text>
-        <Link href={SITE_URL} label="asciimood website ↗" />
-      </Box>
-    </Box>
-  )
-  const picture =
-    raster !== undefined ? framed(els, raster(W, H), W, state) : <Text key="art">{render(entry, playhead, W, H).chars.join('\n')}</Text>
-
+/** The line under the picture: what Claude is doing, for how long, and what plays. */
+function statusLine({ Box, Text }: Els, state: AgentState, detail: string, hint: string) {
   return (
-    <Box flexDirection="column">
-      {title}
-      {actions}
-      {shelves}
-      <Box columnGap={2}>
-        {hasSidebar && sidebar}
-        <Box flexDirection="column">
-          {picture}
-          {caption}
-        </Box>
-      </Box>
+    <Box key="status">
+      <Text color={STATE_COLORS[state]}>● </Text>
+      <Text bold>{LABELS[state]}</Text>
+      <Text dimColor>{detail === '' ? '' : `  ${detail}`}</Text>
+      <Text dimColor>{`  ·  ${elapsed(Date.now() - turnStartedAt)}  ·  ${current().name}${hint === '' ? '' : `  ·  ${hint}`}`}</Text>
     </Box>
   )
 }
 
-/** One place the animation is drawn: the pane, or the working line. */
+/** One place the animation is drawn: the working line, or the stage. */
 type Site = { requestId: string; W: number; H: number; isMounted: boolean; shown?: Frame; shownId: string; fade?: { from: Frame; at: number } }
 
 // What the frame clock reads. Drawings read the atoms, so they redraw on a
@@ -236,17 +103,21 @@ type Site = { requestId: string; W: number; H: number; isMounted: boolean; shown
 // hot reload loads the module afresh and session.start fills them again.
 let now: AsciimoodAgent = { state: 'idle', detail: '' }
 let chosen: AsciimoodPrefs = INITIAL_PREFS
+let device = ''
 let shuffled: string | undefined
 let playhead = 0
 let lastTick = Date.now()
 let turnStartedAt = Date.now()
 let idleTimer: Timer | undefined
+let fastPoll: Timer | undefined
+let fastPollUntil = 0
 // Filming: `/asciimood demo` plays a made-up session, `/asciimood tour` walks the
 // library. Both run in the plugin alone (no model, no tokens), leave the person's
 // setup untouched, and stop at `/asciimood stop` or when a real turn starts.
 let reel: Timer | undefined
+let isPaneOpen = false
 let touring: string | undefined
-// `/asciimood tour … clean` hides the picker's controls and frame while the tour plays.
+// `clean` hides the frame and the status line, so the animation fills the stage.
 let isClean = false
 const DEMO: [AgentState, string, number][] = [
   ['think', '', 3500], ['read', 'Read Dashboard.tsx', 3500], ['write', 'Edit theme.css', 4000], ['run', 'Bash npm test', 4000],
@@ -294,11 +165,11 @@ const siteFor = (requestId: string, W: number, H: number): Site => {
 let lastSecond = 0
 async function tick($: EngineInterface) {
   const at = Date.now()
-  // The working line shows the turn's elapsed time: redraw it once a second.
+  // The status line shows the turn's elapsed time: redraw it once a second.
   const second = Math.floor(at / 1000)
   if (second !== lastSecond && now.state !== 'idle' && now.state !== 'done') $.ui.invalidate('ui.render')
   lastSecond = second
-  if (!chosen.isPaused) playhead += (at - lastTick) / 1000
+  playhead += (at - lastTick) / 1000
   lastTick = at
   for (const site of sites.values()) {
     if (!site.isMounted) continue
@@ -342,138 +213,179 @@ function playTour($: EngineInterface, list: Entry[], ms: number, i = 0) {
   reel = $.clock.after(ms, () => playTour($, list, ms, i + 1))
 }
 
-async function setPrefs($: EngineInterface, change: (p: AsciimoodPrefs) => AsciimoodPrefs) {
-  chosen = change(chosen)
+/**
+ * A setup as asciimood.com stores it, made safe: only known modes, states and
+ * animations get through, and anything else keeps its default.
+ */
+export function cleanSetup(raw: unknown): AsciimoodPrefs | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const r = raw as Record<string, unknown>
+  const mode = r.mode === 'one' || r.mode === 'shuffle' ? r.mode : 'auto'
+  const perState: Record<string, string> = {}
+  const per = (typeof r.perState === 'object' && r.perState !== null ? r.perState : {}) as Record<string, unknown>
+  for (const state of STATES) {
+    const id = per[state]
+    if (typeof id === 'string' && BY_ID.has(id)) perState[state] = id
+  }
+  const one = typeof r.one === 'string' && BY_ID.has(r.one) ? r.one : INITIAL_PREFS.one
+  return { mode, one, perState, isHidingTools: r.isHidingTools !== false }
+}
+
+/** This install's anonymous id, made once: the website keeps the setup under it. */
+async function ensureDevice($: EngineInterface): Promise<string> {
+  if (device !== '') return device
+  const saved = (await $.store.get('device')) as unknown
+  device = typeof saved === 'string' && /^[0-9a-f-]{36}$/.test(saved) ? saved : crypto.randomUUID()
+  if (device !== saved) await $.store.set('device', device)
+  return device
+}
+
+const setupUrl = (): string => `${SITE_URL}/setup/#d=${device}`
+
+/** Reads this device's setup from asciimood.com; resolves whether it changed. */
+async function pull($: EngineInterface): Promise<boolean> {
+  await ensureDevice($)
+  let next: AsciimoodPrefs | undefined
+  try {
+    const got = await $.http.fetch(`${SITE_URL}/api/setup/${device}`)
+    if (!got.ok) return false
+    next = cleanSetup((JSON.parse(got.text) as { setup?: unknown }).setup)
+  } catch {
+    return false // offline: keep what we have
+  }
+  if (next === undefined || JSON.stringify(next) === JSON.stringify(chosen)) return false
+  chosen = next
+  shuffled = undefined
   await update($, prefs, () => chosen)
   await $.store.set('prefs', chosen)
+  return true
 }
 
-/** Puts `id` on screen the way the current mode keeps it. */
-function choose($: EngineInterface, id: string) {
-  return setPrefs($, p => {
-    if (p.mode === 'one') return { ...p, one: id }
-    if (p.mode === 'shuffle') {
-      shuffled = id
-      return p
+function pollFast($: EngineInterface) {
+  fastPollUntil = Date.now() + FAST_POLL_FOR_MS
+  if (fastPoll !== undefined) return
+  fastPoll = $.clock.every(FAST_POLL_MS, () => {
+    if (Date.now() > fastPollUntil) {
+      fastPoll?.cancel()
+      fastPoll = undefined
+      return
     }
-    return { ...p, perState: { ...p.perState, [now.state]: id } }
+    void pull($).then(changed => {
+      if (changed) $.ui.toast(`Asciimood: your setup from asciimood.com is on (${describe()}).`)
+    })
   })
 }
-function step($: EngineInterface, by: number) {
-  void update($, view, w => ({ ...w, cat: '', offset: 0 }))
-  const i = CATALOG.findIndex(entry => entry.id === currentId())
-  return choose($, wrapAt(CATALOG, i + by).id)
-}
-function pickRandom($: EngineInterface) {
-  void update($, view, w => ({ ...w, cat: '', offset: 0 }))
-  const others = CATALOG.filter(entry => entry.id !== currentId())
-  return choose($, wrapAt(others, Math.floor(Math.random() * others.length)).id)
+
+const describe = (): string =>
+  chosen.mode === 'one' ? `${BY_ID.get(chosen.one)?.name} for everything`
+  : chosen.mode === 'shuffle' ? 'shuffle'
+  : `${BY_ID.get(chosen.perState.think ?? DEFAULTS.think)?.name} while thinking…`
+
+/** Opens the setup page in the person's browser; resolves whether it could. */
+async function openInBrowser($: EngineInterface, url: string): Promise<boolean> {
+  const isWindows = (await $.env.get('OS')) === 'Windows_NT'
+  const tries: string[][] = isWindows ? [['cmd', '/c', 'start', '', url]] : [['open', url], ['xdg-open', url]]
+  for (const argv of tries) {
+    try {
+      if ((await $.process.run(argv, { timeoutMs: 5_000 })).exitCode === 0) return true
+    } catch {
+      // not on this system: try the next
+    }
+  }
+  return false
 }
 
-const STATES = Object.keys(LABELS) as AgentState[]
+async function closeStage($: EngineInterface) {
+  await update($, view, () => ({ isOpen: false }))
+  if (isPaneOpen) await $.ui.close({ id: PANE })
+  isPaneOpen = false
+}
 
-/**
- * A setup as asciimood.com's configurator writes it: `all=<animation>` plays one for
- * everything, `<state>=<animation>` picks per state (states left out keep theirs).
- * Nothing changes unless every pair is understood.
- */
-export async function applySetup($: EngineInterface, arg: string): Promise<string> {
-  const picks: Partial<Record<AgentState | 'all', string>> = {}
-  for (const pair of arg.split(/\s+/)) {
-    const [key = '', id = ''] = pair.split('=')
-    if (key !== 'all' && !STATES.includes(key as AgentState)) return `Unknown state "${key}": use all, ${STATES.join(', ')}.`
-    if (!BY_ID.has(id)) return `No animation called "${id}". Try /asciimood list.`
-    picks[key as AgentState | 'all'] = id
+/** The stage while filming: the framed animation and its line, or (clean) the animation alone, filling the room. */
+async function stage($: EngineInterface, els: Els & { Raster: ElementConstructor<RasterProps> }, requestId: string, columns: number, rows: number) {
+  const { state, detail } = await read($, agent)
+  const { Box, Raster } = els
+  const art = (W: number, H: number) => {
+    const site = siteFor(requestId, W, H)
+    return <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor(site), W, H)} />
   }
-  const { all, ...perState } = picks
-  if (all !== undefined) {
-    await setPrefs($, p => ({ ...p, mode: 'one', one: all }))
-    return `Asciimood: ${BY_ID.get(all)?.name} for everything.`
+  if (isClean) {
+    const W = Math.max(20, Math.min(512, columns))
+    const H = Math.max(6, Math.min(254, rows))
+    return <Box key="clean">{art(W, H)}</Box>
   }
-  await setPrefs($, p => ({ ...p, mode: 'auto', perState: { ...p.perState, ...perState } }))
-  return `Asciimood: ${Object.entries(perState).map(([state, id]) => `${LABELS[state as AgentState]} → ${BY_ID.get(id)?.name}`).join(', ')}.`
+  const W = Math.max(20, Math.min(512, columns - 2))
+  const H = Math.max(6, Math.min(254, rows - 3))
+  return (
+    <Box flexDirection="column">
+      {framed(els, art(W, H), W, state)}
+      {statusLine(els, state, detail, '/asciimood stop to end')}
+    </Box>
+  )
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    const saved = (await $.store.get('prefs')) as Partial<AsciimoodPrefs> | undefined
-    chosen = { ...INITIAL_PREFS, ...(await read($, prefs)), ...(saved ?? {}) }
+    const saved = (await $.store.get('prefs')) as unknown
+    chosen = cleanSetup(saved) ?? (await read($, prefs))
     await update($, prefs, () => chosen)
     now = await read($, agent)
+    await ensureDevice($)
     await $.command.register({
       name: 'asciimood',
-      description: 'Pick the Asciimood animations (or: random, next, prev, shuffle, pause, tools, list, site, close, demo, tour [category] [seconds] [clean], stop, <animation>, <state>=<animation>)',
-      argumentHint: '[demo|tour [category] [seconds] [clean]|stop|random|next|prev|shuffle|pause|tools|list|site|close|<animation>|think=<animation> …]',
+      description: 'Choose your Asciimood animations on asciimood.com (or: demo, tour [seconds] [clean], stop to film)',
+      argumentHint: '[demo|tour [seconds] [clean]|stop]',
     })
     $.clock.every(Math.round(1000 / FPS), () => void tick($))
+    $.clock.every(SLOW_POLL_MS, () => void pull($))
+    void pull($)
     $.ui.status(LABELS[now.state])
 
     return next(e)
   })
 
   on('command.run', { command: 'asciimood' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
-    if (arg === 'site') return { text: `Asciimood's website: ${SITE_URL}` }
-    if (arg === 'list') {
-      return { text: CATALOG.map(entry => `${entry.id} — ${entry.name} (${entry.by})`).join('\n') }
-    }
-    if (arg.includes('=')) return { text: await applySetup($, arg) }
-    if (arg === 'shuffle') {
-      await setPrefs($, p => ({ ...p, mode: 'shuffle' }))
-      return { text: 'Asciimood: a new animation at each change of state.' }
-    }
-    const [verb = '', ...rest] = arg.split(/\s+/)
+    const [verb = '', ...rest] = e.args.trim().toLowerCase().split(/\s+/)
     if (verb === 'stop') {
       stopReel()
       await setAgent($, 'idle')
+      await closeStage($)
       return { text: 'Asciimood: filming stopped.' }
     }
-    if (verb === 'demo') {
+    if (verb === 'demo' || verb === 'tour') {
       stopReel()
-      playDemo($)
+      if (verb === 'demo') playDemo($)
+      else {
+        const seconds = Number(rest.find(word => /^\d+(\.\d+)?$/.test(word)) ?? 4)
+        isClean = rest.includes('clean')
+        playTour($, CATALOG, Math.max(1, seconds) * 1000)
+      }
+      if (e.presentation?.isFullscreen !== true) {
+        await update($, view, () => ({ isOpen: true }))
+        return { text: 'Asciimood is filming above the prompt: /asciimood stop to end.' }
+      }
+      const opened = await $.ui.open({ id: PANE, title: 'Asciimood', rows: PANE_ROWS, columns: Math.max(80, (e.presentation?.columns ?? 120) - 4) })
+      isPaneOpen = true
+      return { text: opened.isPlaced ? 'Asciimood is filming: /asciimood stop to end.' : 'Asciimood is waiting for a wider terminal.' }
     }
-    else if (verb === 'tour') {
-      const seconds = Number(rest.find(word => /^\d+(\.\d+)?$/.test(word)) ?? 4)
-      const shelf = rest.find(word => CATEGORIES.includes(word))
-      const list = shelf === undefined ? CATALOG : CATALOG.filter(entry => entry.cat === shelf)
-      stopReel()
-      isClean = rest.includes('clean')
-      playTour($, list, Math.max(1, seconds) * 1000)
-    }
-    else if (arg === 'random') await pickRandom($)
-    else if (arg === 'next') await step($, 1)
-    else if (arg === 'prev') await step($, -1)
-    else if (arg === 'pause') await setPrefs($, p => ({ ...p, isPaused: !p.isPaused }))
-    else if (arg === 'tools') await setPrefs($, p => ({ ...p, isHidingTools: !p.isHidingTools }))
-    else if (arg === 'close') {
-      await update($, view, w => ({ ...w, isOpen: false }))
-      await $.ui.close({ id: PANE })
-      return { text: 'Asciimood closed.' }
-    }
-    else if (arg !== '') {
-      const entry = CATALOG.find(one => one.id === arg || one.name.toLowerCase() === arg)
-      if (entry === undefined) return { text: `No animation called "${arg}". Try /asciimood list.` }
-      await choose($, entry.id)
-    }
-    if (e.presentation?.isFullscreen !== true) {
-      await update($, view, w => ({ ...w, isOpen: true }))
-      return { text: 'Asciimood is open above the prompt: ctrl+x then tab to use its keys, x to close.' }
-    }
-    const opened = await $.ui.open({
-      id: PANE,
-      title: 'Asciimood',
-      rows: PANE_ROWS,
-      columns: Math.max(80, (e.presentation?.columns ?? 120) - 40),
-      focus: true,
-      closeOnEscape: true,
-    })
+    if (verb !== '') return { text: `Asciimood is set up on the website now: ${setupUrl()}` }
 
-    return { text: opened.isPlaced ? `Asciimood: ${current().name}.` : 'Asciimood is waiting for a wider terminal.' }
+    await ensureDevice($)
+    const isOpen = await openInBrowser($, setupUrl())
+    pollFast($)
+    return {
+      text: isOpen
+        ? `Asciimood: choose your animations in the page that just opened. They play here as soon as you save.\n${setupUrl()}`
+        : `Asciimood: open this page to choose your animations. They play here as soon as you save.\n${setupUrl()}`,
+    }
   })
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
-      stopReel()
+      if (reel !== undefined) {
+        stopReel()
+        await closeStage($)
+      }
       turnStartedAt = Date.now()
       await setAgent($, 'think')
     }
@@ -489,7 +401,7 @@ export const register: Register = on => {
     if (isMain && ran.isError === true) await setAgent($, 'error', `${tool} failed`)
 
     return ran
-   }).catch(($, e, next) => next(e)) // never stand in the way of a tool call
+  }).catch(($, e, next) => next(e)) // never stand in the way of a tool call
 
   on('turn.complete', async ($, e, next) => {
     if ((e as { agentId?: string }).agentId === undefined) {
@@ -501,33 +413,24 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // While a turn runs: the animation in place of the working line.
+  // While a turn runs: the animation in place of the working line, across the
+  // window's width and all its height but the prompt, the footer and our line.
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
-    const p = await read($, prefs)
+    await read($, prefs)
     const { state, detail } = await read($, agent)
     if (e.surface !== 'terminal') return next(e)
-    const { Box, Text, Raster } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Raster } = els
     const columns = e.viewport?.columns ?? 80
     const rows = e.viewport?.rows ?? 24
     const W = Math.max(20, Math.min(512, columns - 4))
-    const H = Math.max(8, Math.min(26, Math.floor(rows * 0.5)))
+    const H = Math.max(8, Math.min(254, rows - 10))
     const site = siteFor(e.requestId, W, H)
-    const entry = current()
 
     return (
       <Box flexDirection="column">
-        {framed(
-          $.ui.resolve(e),
-          <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor(site), W, H)} />,
-          W,
-          state,
-        )}
-        <Box>
-          <Text color={STATE_COLORS[state]}>● </Text>
-          <Text bold>{LABELS[state]}</Text>
-          <Text dimColor>{detail === '' ? '' : `  ${detail}`}</Text>
-          <Text dimColor>{`  ·  ${elapsed(Date.now() - turnStartedAt)}  ·  ${entry.name}${p.isPaused ? ' (paused)' : ''}  ·  /asciimood to change`}</Text>
-        </Box>
+        {framed(els, <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor(site), W, H)} />, W, state)}
+        {statusLine(els, state, detail, '/asciimood to change')}
       </Box>
     )
   })
@@ -550,37 +453,19 @@ export const register: Register = on => {
     return <Box />
   })
 
-  // On the main screen the picker is the band above the prompt, which may take
+  // On the main screen the stage is the band above the prompt, which may take
   // the terminal's whole height; in the fullscreen layout it is a docked pane.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const v = await read($, view)
-    if (v.isOpen !== true || e.props.hasSurvey || e.surface === 'mobile') return next(e)
-    const els = $.ui.resolve(e)
-    const raster =
-      e.surface === 'terminal'
-        ? (W: number, H: number) => {
-            const { Raster } = $.ui.resolve(e)
-            const site = siteFor(e.requestId, W, H)
-            return <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor(site), W, H)} />
-          }
-        : undefined
-    return drawPicker($, els, raster, e.props.bodyColumns, e.props.maxRows - 1, 'ctrl+x tab: use the keys · esc: back to the prompt')
+    if (v.isOpen !== true || e.props.hasSurvey || e.surface !== 'terminal') return next(e)
+    return stage($, $.ui.resolve(e), 'stage', e.props.bodyColumns, e.props.maxRows - 1)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    if (e.surface === 'mobile') {
+    if (e.surface !== 'terminal') {
       const { Text } = $.ui.resolve(e)
-      return <Text>Asciimood plays in the terminal: /asciimood there to choose.</Text>
+      return <Text>Asciimood plays in the terminal.</Text>
     }
-    const els = $.ui.resolve(e)
-    const raster =
-      e.surface === 'terminal'
-        ? (W: number, H: number) => {
-            const { Raster } = $.ui.resolve(e)
-            const site = siteFor(PANE, W, H)
-            return <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor(site), W, H)} />
-          }
-        : undefined
-    return drawPicker($, els, raster, e.props.bodyColumns, e.props.scroll.bodyRows, 'esc: back to the prompt')
+    return stage($, $.ui.resolve(e), PANE, e.props.bodyColumns, e.props.scroll.bodyRows)
   })
 }

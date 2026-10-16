@@ -1,8 +1,10 @@
 {
   "name": "asciimood",
-  "version": "0.5.1",
-  "description": "Looping ASCII animations that react to what Claude is doing, with a picker to choose them.",
-  "author": { "name": "Tom Daluzeau" },
+  "version": "0.6.0",
+  "description": "Looping ASCII animations that react to what Claude is doing. Choose them on asciimood.com.",
+  "author": {
+    "name": "Tom Daluzeau"
+  },
   "homepage": "https://asciimood.com",
   "types": "./types/index.d.ts"
 }
