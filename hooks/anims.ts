@@ -512,6 +512,140 @@ A.bolt = (() => {
   };
 })();
 
+// Heart: a heart with two eyes, redrawn from a screenshot of a heart logo with eyes.
+// Our own shape: the classic parametric heart (x = 16 sin^3 t, y = 13 cos t - ...) drawn as a
+// thin line, its tangent picking / \ | _ - per cell. It beats lub-dub three times a loop; the
+// almond eyes look right, then left, then down, and blink once. Eyes sampled 2x2 per cell:
+// full cells get dense letters, part-filled cells get edge strokes, the pupil stays dark.
+A.heart = (() => {
+  const smooth = (e0, e1, x) => {
+    const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+  };
+  // a bump around phase c (wrapped, so it loops), width w
+  const bump = (p, c, w) => {
+    let d = Math.abs(p - c) % 1;
+    d = Math.min(d, 1 - d);
+    return Math.exp(-(d * d) / (2 * w * w));
+  };
+  // gaze keyframes over one loop: [p, x, y] in units of the pupil's travel
+  const GAZE = [[0.0, 0.75, 0.45], [0.22, 0.75, 0.45], [0.34, -0.75, 0.35], [0.56, -0.75, 0.35], [0.66, 0.0, -0.5], [0.86, 0.0, -0.5], [1.0, 0.75, 0.45]];
+  const gaze = (p) => {
+    for (let i = 0; i < GAZE.length - 1; i++) {
+      const [a, ax, ay] = GAZE[i], [b, bx, by] = GAZE[i + 1];
+      if (p >= a && p <= b) {
+        const k = smooth(a, b, p);
+        return [ax + (bx - ax) * k, ay + (by - ay) * k];
+      }
+    }
+    return [GAZE[0][1], GAZE[0][2]];
+  };
+  const DENSE = "@@#%&8B";
+
+  return (p, W, H) => {
+    // lub-dub, three beats a loop
+    let beat = 0;
+    for (let k = 0; k < 3; k++) beat += bump(p, k / 3 + 0.04, 0.012) + 0.6 * bump(p, k / 3 + 0.085, 0.012);
+    const s = 1 + 0.08 * beat;
+    const sc = Math.min((W * 0.8) / 34, (H * 2 * 0.84) / 30) * s; // columns per unit; rows are two columns tall
+    const cx = W / 2, cy = H / 2 - 0.4; // heart centre (y unit 0 sits a bit above the middle)
+    const yOff = 2.5; // the parametric heart spans y -17..12; centre it
+    const grid = Array.from({ length: H }, () => new Array(W).fill(" "));
+
+    // the outline, one stroke thick: steep stretches get one cell per row (where the curve
+    // crosses the row's middle), shallow ones one cell per column; the tangent picks the stroke
+    const N = 900;
+    const toCell = (t) => {
+      const x = 16 * Math.sin(t) ** 3;
+      const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+      return [cx + x * sc, cy - ((y + yOff) * sc) / 2];
+    };
+    const put = (q, r, ch) => {
+      if (q >= 0 && q < W && r >= 0 && r < H && grid[r][q] === " ") grid[r][q] = ch;
+    };
+    const stroke = (a, fy) => {
+      if (Math.abs(a) < 22) return fy > 0.6 ? "_" : fy < 0.25 ? "\"" : "-";
+      if (Math.abs(a) > 72) return "|";
+      return a > 0 ? "/" : "\\";
+    };
+    const pts = [];
+    for (let i = 0; i <= N; i++) pts.push(toCell((i / N) * TAU));
+    // the cleft and the tip are corners: the curve runs into both almost straight up and
+    // down, so cut that stem off and close each with one V where the two sides meet
+    const CLEFT = 0.26, TIP = 0.28;
+    put(Math.floor(cx), Math.floor(toCell(CLEFT)[1]), "V");
+    put(Math.floor(cx), Math.floor(toCell(Math.PI - TIP)[1]), "V");
+    for (let i = 0; i < N; i++) {
+      const t = ((i + 0.5) / N) * TAU;
+      if (Math.min(t, TAU - t) < CLEFT || Math.abs(t - Math.PI) < TIP) continue;
+      const [AX, AY] = pts[i], [BX, BY] = pts[i + 1];
+      const dx = BX - AX, dy = (BY - AY) * 2;
+      const a = (Math.atan2(-dy * Math.sign(dx || 1), Math.abs(dx)) * 180) / Math.PI; // -90..90, up positive
+      if (Math.abs(a) > 34) {
+        for (let r = Math.ceil(Math.min(AY, BY) - 0.5); r + 0.5 <= Math.max(AY, BY); r++) {
+          const k = (r + 0.5 - AY) / (BY - AY);
+          put(Math.floor(AX + dx * k), r, stroke(a, 0.5));
+        }
+      } else {
+        for (let q = Math.ceil(Math.min(AX, BX) - 0.5); q + 0.5 <= Math.max(AX, BX); q++) {
+          const Y = AY + (BY - AY) * ((q + 0.5 - AX) / (BX - AX));
+          put(q, Math.floor(Y), stroke(a, Y - Math.floor(Y)));
+        }
+      }
+    }
+
+    // the eyes: almonds that blink, pupils that wander
+    const blink = Math.max(bump(p, 0.6, 0.012), bump(p, 0.95, 0.01));
+    const open = 1 - smooth(0.25, 0.95, blink);
+    const [gx, gy] = gaze(p);
+    const EX = 7.4, EY = 1.6, HW = 4.4, HH = 3.1 * open + 0.15, PR = 2.0;
+    const eyeAt = (ux, uy) => {
+      for (const side of [-1, 1]) {
+        const lx = ux - side * EX, ly = uy - EY;
+        const f = 1 - (lx / HW) ** 2;
+        if (f <= 0) continue;
+        // a slight droop to the outer corner gives it a soft look
+        const tilt = -0.12 * side * lx;
+        const top = HH * f ** 0.75 + tilt, bot = -HH * 0.85 * f ** 0.75 + tilt;
+        if (ly > top || ly < bot) continue;
+        const px = gx * (HW - PR - 0.6), py = gy * Math.max(0, HH - PR * 0.7);
+        const dp = Math.hypot(lx - px, ly - py);
+        return dp < PR ? 2 : 1;
+      }
+      return 0;
+    };
+    const SUB = [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
+    for (let r = 0; r < H; r++) {
+      for (let q = 0; q < W; q++) {
+        const v = SUB.map(([i, j]) => eyeAt((q + i - cx) / sc, -(((r + j - cy) * 2) / sc) - yOff));
+        const lit = v.map((a) => a === 1), n = lit.filter(Boolean).length;
+        if (!v.some((a) => a > 0)) continue;
+        const [tl, tr, bl, br] = lit, h = hash(q, r, 7);
+        let ch = " ";
+        if (n === 4) ch = DENSE[Math.floor(h * DENSE.length)];
+        else if (n === 3) ch = !tl ? "d" : !tr ? "b" : !bl ? "Y" : "P";
+        else if (n === 2) {
+          if (tl && tr) ch = "\"";
+          else if (bl && br) ch = "_";
+          else if (tl && bl) ch = "[";
+          else if (tr && br) ch = "]";
+          else ch = tl ? "\\" : "/";
+        } else if (n === 1) ch = tl || tr ? "'" : ".";
+        grid[r][q] = ch;
+      }
+    }
+    // one glint per pupil, a single cell up and to the right of its centre
+    if (open > 0.6) {
+      const px = gx * (HW - PR - 0.6), py = gy * Math.max(0, HH - PR * 0.7);
+      for (const side of [-1, 1]) {
+        const q = Math.floor(cx + (side * EX + px + 0.7) * sc), r = Math.floor(cy - ((EY + py + 0.8 + yOff) * sc) / 2);
+        if (r >= 0 && r < H && q >= 0 && q < W && grid[r][q] === " ") grid[r][q] = "o";
+      }
+    }
+    return grid.map((row) => row.join("")).join("\n");
+  };
+})();
+
 // Hero: the word ASCIIMOOD filled with plasma over a dim field.
 const FONT = {
   K: ["#   #", "#  # ", "# #  ", "##   ", "# #  ", "#  # ", "#   #"],

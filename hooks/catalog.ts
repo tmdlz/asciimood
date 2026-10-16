@@ -38,6 +38,7 @@ export const CATALOG: Entry[] = [
   { id: 'horse', name: 'Horse', note: "Muybridge's 1878 gallop, in ASCII", hues: [25, 45], dur: 1.5 },
   { id: 'white-cat', anim: 'dotcat', name: 'White cat', note: 'a white cat in dots, blinking', hues: [0, 0], ink: 0xf3f0e9, dur: 4 },
   { id: 'bolt', name: 'Bolt', note: 'a thick, leaning lightning bolt making one full turn on its axis', hues: [0, 0], ink: 0xeeece6, ground: 0x0b0b0e, dur: 6 },
+  { id: 'heart', name: 'Heart', note: 'a heart with two eyes, beating lub-dub while it looks around and blinks', hues: [0, 0], ink: 0xf2efe8, ground: 0x0b0a0a, dur: 6 },
   { id: 'hero', name: 'ASCIIMOOD', note: 'the name, filled with plasma', hues: [30, 350], dur: 8 },
 ]
 
