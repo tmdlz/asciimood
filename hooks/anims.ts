@@ -1128,6 +1128,108 @@ A.radiation = (() => {
   };
 })();
 
+// Binary mask: a Guy Fawkes ("Anonymous") mask made of 0s and 1s, white on black, our own drawing
+// redrawn from a screenshot. The face is a width profile down its height; the features (arched
+// brows, slit eyes, nose, curled moustache, smile, pointed goatee) are strokes cut out of it as dark
+// gaps, measured in screen cells so they stay one clean row thick at any size. Columns of falling
+// digits write the mask from the top, it holds, then a second rain washes it away. Empty at both
+// ends, so the loop is seamless.
+A.mask = (() => {
+  // half-width of the face down its height v in [0,1] (forehead to chin)
+  const PROFILE = [[0, 0.36], [0.02, 0.6], [0.06, 0.82], [0.12, 0.94], [0.22, 1], [0.42, 1],
+    [0.55, 0.96], [0.66, 0.86], [0.76, 0.7], [0.85, 0.52], [0.92, 0.36], [0.97, 0.24], [1, 0.16]];
+  const halfW = (v) => {
+    for (let i = 1; i < PROFILE.length; i++) {
+      const [v1, w1] = PROFILE[i];
+      if (v <= v1) { const [v0, w0] = PROFILE[i - 1]; return w0 + (w1 - w0) * (v - v0) / (v1 - v0); }
+    }
+    return 0;
+  };
+
+  // strokes on the right half, as polylines in (|u|, v) with a thickness per point
+  // (in fractions of the mask height, never under one row); mirrored to the left.
+  const STROKES = [
+    // brow: rising steeply from the nose to a high peak, then sloping down to the temple
+    [[0.1, 0.25, 0], [0.24, 0.17, 0], [0.4, 0.13, 0.012], [0.56, 0.14, 0.012], [0.72, 0.18, 0], [0.84, 0.23, 0]],
+    // nose: just the tip, a short hook under the nostril
+    [[0.13, 0.46, 0], [0.12, 0.51, 0], [0.0, 0.52, 0]],
+    // moustache: thin under the nose, thickening outward, then curling up hard into the cheek
+    [[0.0, 0.58, 0], [0.14, 0.595, 0.034], [0.3, 0.6, 0.036], [0.42, 0.575, 0.03], [0.52, 0.515, 0.022],
+      [0.565, 0.45, 0.012], [0.54, 0.41, 0], [0.48, 0.42, 0]],
+    // smile, well under the moustache, its corners lifting
+    [[0.0, 0.715, 0], [0.15, 0.71, 0], [0.27, 0.69, 0], [0.35, 0.655, 0]],
+    // goatee: a narrow point from under the lip toward the chin
+    [[0.0, 0.775, 0.03], [0.0, 0.84, 0.024], [0.0, 0.9, 0]],
+  ];
+
+  // distance from point (x, y) to segment (ax, ay)-(bx, by), and where along it
+  const seg = (x, y, ax, ay, bx, by) => {
+    const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
+    const t = l ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l)) : 0;
+    return [Math.hypot(x - ax - t * dx, y - ay - t * dy), t];
+  };
+
+  // is the cell at (u, v) inside the face and not on a feature? hw, hr: mask size in cells
+  const surface = (u, v, hw, hr) => {
+    if (v < 0 || v > 1) return false;
+    const a = Math.abs(u);
+    if (a > halfW(v)) return false;
+    // screen units: one column wide, a row is two columns tall
+    const X = a * hw, Y = v * hr * 2, min = 1.05;
+    // eyes: pointed slits, the lower lid lifting at the outer corner like a smile
+    const s = (a - 0.44) / 0.23;
+    if (Math.abs(s) < 1) {
+      const mid = 0.315 - 0.02 * s, half = Math.max(0.05 * (1 - s * s) * hr * 2, s * s < 0.8 ? min : 0);
+      if (Math.abs(Y - mid * hr * 2) < half) return false;
+    }
+    for (const st of STROKES) {
+      for (let i = 1; i < st.length; i++) {
+        const [a0, v0, w0] = st[i - 1], [a1, v1, w1] = st[i];
+        const [d, t] = seg(X, Y, a0 * hw, v0 * hr * 2, a1 * hw, v1 * hr * 2);
+        if (d < Math.max(min, (w0 + (w1 - w0) * t) * hr)) return false;
+      }
+    }
+    return true;
+  };
+
+  // timeline (fractions of the loop)
+  const SPREAD = 0.09, FALL = 0.15, IN = 0.01, OUT = 0.67, TRAIL = [null, null, ":", "."];
+
+  return (p, W, H) => {
+    const hr = Math.min(H * 0.96, (W * 0.92) / 1.56); // mask height in rows
+    const hw = hr * 0.78; // half-width in columns (cells are twice as tall as wide)
+    const top = (H - hr) / 2, cx = (W - 1) / 2;
+    const rows = H + TRAIL.length;
+    // the rain head's row in column x for a rain starting at t0
+    const head = (x, t0) => (p - t0 - SPREAD * hash(x, 7)) / FALL * rows;
+    const lines = [];
+    for (let y = 0; y < H; y++) {
+      let line = "";
+      for (let x = 0; x < W; x++) {
+        const u = (x - cx) / hw, v = (y + 0.5 - top) / hr;
+        const f = surface(u, v, hw, hr);
+        const bit = (x + y) % 2;
+        let ch = f ? (bit ? "1" : "0") : " ";
+        const hin = head(x, IN), hout = head(x, OUT);
+        if (y > hin) ch = " "; // not written yet
+        if (y < hout) ch = " "; // already washed away
+        // the falling heads and their trails, drawn over everything, only around the mask
+        if (Math.abs(x - cx) > hw + 3) { line += ch; continue; }
+        for (const h of [hin, hout]) {
+          const k = Math.floor(h) - y;
+          if (k >= 0 && k < TRAIL.length && h < H + TRAIL.length) {
+            ch = TRAIL[k] || (hash(x, y, Math.floor(h)) < 0.5 ? "0" : "1");
+            if (f && h === hin && k > 0) ch = bit ? "1" : "0"; // settled behind the first head
+          }
+        }
+        line += ch;
+      }
+      lines.push(line);
+    }
+    return lines.join("\n");
+  };
+})();
+
 // Pseudo-random dissolve between two frames (used for state transitions).
 A.dissolve = (from, to, k) => {
   let o = "";
