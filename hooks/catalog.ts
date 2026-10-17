@@ -88,8 +88,8 @@ export function setPro(raw: unknown): void {
 export const DEFAULTS: Record<AgentState, string> = {
   idle: 'sleeping-cat',
   think: 'bolt',
-  read: 'char-rain',
-  write: 'helix',
+  read: 'helix',
+  write: 'char-rain',
   run: 'checker-tunnel',
   error: 'fire',
   done: 'waves',
