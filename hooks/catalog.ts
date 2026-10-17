@@ -87,7 +87,7 @@ export function setPro(raw: unknown): void {
 /** The animation each state plays until the person picks another on asciimood.com. */
 export const DEFAULTS: Record<AgentState, string> = {
   idle: 'sleeping-cat',
-  think: 'orbits',
+  think: 'bolt',
   read: 'char-rain',
   write: 'helix',
   run: 'checker-tunnel',
