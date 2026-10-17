@@ -273,6 +273,26 @@ async function takePro($: EngineInterface, catalog: unknown) {
   await $.store.set('pro', catalog ?? null)
 }
 
+/** Turns Pro on for this device with the key from the purchase email; says how it went. */
+async function activate($: EngineInterface, key: string): Promise<string> {
+  await ensureDevice($)
+  try {
+    const got = await $.http.fetch(`${SITE_URL}/api/pro/activate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device, key }) })
+    const body = JSON.parse(got.text) as { pro?: boolean; reason?: string }
+    if (got.ok && body.pro === true) {
+      await pull($)
+      return `Asciimood Pro is on. Pick your Pro animations: /asciimood\n${setupUrl()}`
+    }
+    return {
+      limit: 'Asciimood: this key is already on 3 computers.',
+      unknown: 'Asciimood: this key is not known. Check it was copied whole.',
+      format: 'Asciimood: that does not look like a license key.',
+    }[body.reason ?? ''] ?? 'Asciimood: could not reach the license server. Try again in a minute.'
+  } catch {
+    return 'Asciimood: could not reach asciimood.com. Try again in a minute.'
+  }
+}
+
 /** Reads this device's setup from asciimood.com; resolves whether it changed. */
 async function pull($: EngineInterface): Promise<boolean> {
   await ensureDevice($)
@@ -367,8 +387,8 @@ export const register: Register = on => {
     await ensureDevice($)
     await $.command.register({
       name: 'asciimood',
-      description: 'Choose your Asciimood animations on asciimood.com (or: demo, tour [seconds] [clean], stop to film)',
-      argumentHint: '[demo|tour [seconds] [clean]|stop]',
+      description: 'Choose your Asciimood animations on asciimood.com (or: your Pro key to turn Pro on; demo, tour, stop to film)',
+      argumentHint: '[pro key|demo|tour [seconds] [clean]|stop]',
     })
     $.clock.every(Math.round(1000 / FPS), () => void tick($))
     $.clock.every(SLOW_POLL_MS, () => void pull($))
@@ -379,6 +399,9 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'asciimood' }, async ($, e) => {
+    // `/asciimood <key>` (or `/asciimood activate <key>`): the Pro key from the purchase, as typed
+    const key = /\bASCIIMOOD[-_][0-9A-Za-z-]{8,}/i.exec(e.args)?.[0] ?? (/^\s*activate\s+(\S{8,})/i.exec(e.args)?.[1])
+    if (key !== undefined) return { text: await activate($, key) }
     const [verb = '', ...rest] = e.args.trim().toLowerCase().split(/\s+/)
     if (verb === 'stop') {
       stopReel()

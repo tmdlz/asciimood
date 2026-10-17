@@ -26,6 +26,8 @@ In the desktop app: click + next to the prompt box, then Plugins, Add marketplac
 
 Type `/asciimood`. Your setup page opens on asciimood.com, linked to this Claude Code: pick an animation for each state (or one for everything, or shuffle). It plays here within seconds. No account: the link is an anonymous id the plugin makes for itself, and the page stores only your picks.
 
+Bought Asciimood Pro? Type `/asciimood` followed by the key from your purchase email (`/asciimood ASCIIMOOD-…`): Pro turns on for this Claude Code, then pick your Pro animations with `/asciimood`.
+
 ## Updating
 
 ```

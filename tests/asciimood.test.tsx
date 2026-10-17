@@ -170,3 +170,24 @@ test('a Pro animation plays from frames asciimood.com sends a licensed device, a
   await clock.advance(3_500)
   expect(await ui.find({ type: 'Text', text: /Sleeping cat/ })).toBeDefined()
 })
+
+test('/asciimood with the Pro key from the email turns Pro on for this device', async ($, on) => {
+  mock.store(on, { device: '0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43' })
+  mock.clock(on)
+  mock.env(on, {})
+  on('process.run', async () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
+  const sent: { url: string; body?: string }[] = []
+  on('http.fetch', async (_, e) => {
+    sent.push({ url: e.url, body: e.init?.body })
+    if (e.url.endsWith('/api/pro/activate')) {
+      const ok = String(e.init?.body).includes('ASCIIMOOD-GOOD')
+      return { value: { status: ok ? 200 : 400, ok, headers: {}, text: JSON.stringify(ok ? { ok: true, pro: true } : { error: 'not activated', reason: 'unknown' }) } }
+    }
+    return { value: { status: 404, ok: false, headers: {}, text: '{}' } }
+  })
+  const on1 = await $.command.run({ command: 'asciimood', args: 'ASCIIMOOD-GOOD-1234-ABCD' })
+  expect(on1.text).toContain('Pro is on')
+  expect(sent.find(s => s.url.endsWith('/api/pro/activate'))?.body).toBe(JSON.stringify({ device: '0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43', key: 'ASCIIMOOD-GOOD-1234-ABCD' }))
+  const bad = await $.command.run({ command: 'asciimood', args: 'activate ASCIIMOOD-NOPE-0000-0000' })
+  expect(bad.text).toContain('not known')
+})
