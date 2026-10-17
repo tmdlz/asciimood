@@ -19,6 +19,8 @@ export type Entry = {
   ink?: number
   /** A 0xRRGGBB ground behind the picture, in place of the terminal's. */
   ground?: number
+  /** Asciimood Pro: drawn on asciimood.com ahead of time, its frames fetched for a licensed device. */
+  pro?: true
 }
 
 export const CATALOG: Entry[] = [
@@ -49,6 +51,38 @@ export const CATALOG: Entry[] = [
 ]
 
 export const BY_ID = new Map(CATALOG.map(entry => [entry.id, entry]))
+
+/**
+ * Asciimood Pro. Its drawings are not in this plugin: asciimood.com renders each loop
+ * ahead of time in a few sizes and sends a licensed device the frames, so here a Pro
+ * animation is its catalogue entry plus the frames fetched for it.
+ */
+export const PRO: Entry[] = []
+// The sizes the frames come in (tools/pro/build.mjs): the biggest that fits is played, centred.
+const PRO_COLS = [48, 64, 80, 96, 112, 128, 144, 160, 184, 208, 240]
+const PRO_ROWS = [16, 20, 24, 28, 32, 40, 48, 56, 64]
+const fitting = (sizes: number[], n: number): number => sizes.filter(s => s <= n).pop() ?? sizes[0] ?? n
+export const proSize = (W: number, H: number): string => `${fitting(PRO_COLS, W)}x${fitting(PRO_ROWS, H)}`
+/** Frames fetched from asciimood.com, by `<id>@<size>`: each frame's lines. */
+export const proFrames = new Map<string, string[][]>()
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+/** Takes the Pro catalogue asciimood.com sent (or none, once the license is gone). */
+export function setPro(raw: unknown): void {
+  for (const entry of PRO.splice(0)) BY_ID.delete(entry.id)
+  if (!Array.isArray(raw)) return
+  for (const r of raw as Record<string, unknown>[]) {
+    const { id, name, note, dur, hues, ink, ground } = r ?? {}
+    if (typeof id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(id) || BY_ID.has(id)) continue
+    if (typeof name !== 'string' || typeof note !== 'string' || !isNum(dur) || dur <= 0) continue
+    const pair = Array.isArray(hues) && isNum(hues[0]) && isNum(hues[1]) ? ([hues[0], hues[1]] as [number, number]) : ([0, 0] as [number, number])
+    const entry: Entry = { id, name: name.slice(0, 40), note: note.slice(0, 200), hues: pair, dur, pro: true }
+    if (isNum(ink)) entry.ink = ink
+    if (isNum(ground)) entry.ground = ground
+    PRO.push(entry)
+    BY_ID.set(id, entry)
+  }
+}
 
 /** The animation each state plays until the person picks another on asciimood.com. */
 export const DEFAULTS: Record<AgentState, string> = {
@@ -89,6 +123,14 @@ const shaded = (chars: string[], entry: Entry, W: number, H: number): Frame => {
 /** The picture `entry` shows `t` seconds in, sized W x H. */
 export const render = (entry: Entry, t: number, W: number, H: number): Frame => {
   const p = (t / entry.dur) % 1
+  if (entry.pro === true) {
+    const size = proSize(W, H)
+    const loop = proFrames.get(`${entry.id}@${size}`) ?? []
+    const lines = loop[Math.floor(p * loop.length)] ?? []
+    const [bw = W, bh = H] = size.split('x').map(Number)
+    const top = Math.floor((H - bh) / 2), left = ' '.repeat(Math.max(0, Math.floor((W - bw) / 2)))
+    return shaded(Array.from({ length: H }, (_, y) => (left + (lines[y - top] ?? '')).padEnd(W).slice(0, W)), entry, W, H)
+  }
   const anim: Anim | undefined = ANIMS[entry.anim ?? entry.id]
   if (anim === undefined) return shaded(Array.from({ length: H }, () => ' '.repeat(W)), entry, W, H)
   return shaded(anim(p, W, H).split('\n').map(l => l.padEnd(W).slice(0, W)), entry, W, H)

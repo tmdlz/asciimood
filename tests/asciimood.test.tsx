@@ -140,3 +140,33 @@ test('a clean tour shows the animation alone, filling the stage', async ($, on) 
   expect(art?.props?.rows).toBe(49)
   expect(await ui.find({ type: 'Text', text: ' asciimood ' })).toBeUndefined()
 })
+
+test('a Pro animation plays from frames asciimood.com sends a licensed device, and stops with the license', async ($, on) => {
+  mock.store(on, { device: '0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43' })
+  const clock = mock.clock(on)
+  mock.env(on, {})
+  on('process.run', async () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
+  const DRAGON = { id: 'dragon', name: 'Dragon', note: 'a little dragon', dur: 6, hues: [6, 38] }
+  let isLicensed = true
+  const asked: string[] = []
+  on('http.fetch', async (_, e) => {
+    asked.push(e.url)
+    if (e.url.includes('/api/pro/frames/')) {
+      const frame = Array.from({ length: 28 }, () => 'D'.repeat(96)).join('\n')
+      return { value: { status: 200, ok: true, headers: {}, text: [frame, frame].join('\f') } }
+    }
+    const body = { setup: { mode: 'one', one: 'dragon', perState: {}, isHidingTools: true }, ...(isLicensed ? { pro: { catalog: [DRAGON] } } : {}) }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
+  })
+  await $.command.run({ command: 'asciimood', args: '' })
+  await clock.advance(3_500)
+  const ui = await $.ui.mount(SPINNER)
+  expect(await ui.find({ type: 'Text', text: /Dragon/ })).toBeDefined()
+  await clock.advance(200)
+  // a 100x40 window plays the 96x28 render, fetched for this device
+  expect(asked).toContain('https://asciimood.com/api/pro/frames/dragon/96x28?d=0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43')
+
+  isLicensed = false
+  await clock.advance(3_500)
+  expect(await ui.find({ type: 'Text', text: /Sleeping cat/ })).toBeDefined()
+})

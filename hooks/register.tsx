@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { BoxProps, ElementConstructor, EngineInterface, RasterProps, Register, RenderChildren, TextProps, Timer } from 'claude-code'
 
-import { BY_ID, CATALOG, DEFAULTS, dissolve, render, toCells } from './catalog.ts'
+import { BY_ID, CATALOG, DEFAULTS, PRO, dissolve, proFrames, proSize, render, setPro, toCells } from './catalog.ts'
 import type { Entry, Frame } from './catalog.ts'
 import type { AgentState, AsciimoodAgent, AsciimoodPrefs, AsciimoodView } from '../types'
 
@@ -135,8 +135,31 @@ const currentId = (): string => {
 const wrapAt = <T,>(list: readonly T[], i: number): T => list[((i % list.length) + list.length) % list.length] as T
 const current = (): Entry => BY_ID.get(currentId()) ?? wrapAt(CATALOG, 0)
 
-const frameFor = (site: Site): Frame => {
-  const entry = current()
+// Pro frames asked of asciimood.com, by `<id>@<size>`, and when: a refusal waits a minute.
+const asked = new Map<string, number>()
+const PRO_RETRY_MS = 60_000
+const PRO_KEEP = 6
+
+/** Whether a Pro animation's frames for W x H are here; if not, asks for them. */
+function hasFrames($: EngineInterface, entry: Entry, W: number, H: number): boolean {
+  const size = proSize(W, H)
+  const key = `${entry.id}@${size}`
+  if (proFrames.has(key)) return true
+  if (Date.now() - (asked.get(key) ?? 0) < PRO_RETRY_MS) return false
+  asked.set(key, Date.now())
+  void $.http.fetch(`${SITE_URL}/api/pro/frames/${entry.id}/${size}?d=${device}`).then(got => {
+    if (!got.ok) return
+    const oldest = proFrames.keys().next()
+    if (proFrames.size >= PRO_KEEP && oldest.done !== true) proFrames.delete(oldest.value)
+    proFrames.set(key, got.text.split('\f').map(frame => frame.split('\n')))
+  }).catch(() => undefined)
+  return false
+}
+
+const frameFor = ($: EngineInterface, site: Site): Frame => {
+  let entry = current()
+  // A Pro animation plays once its frames for this size are here: the state's default till then.
+  if (entry.pro === true && !hasFrames($, entry, site.W, site.H)) entry = BY_ID.get(DEFAULTS[now.state]) ?? wrapAt(CATALOG, 0)
   const frame = render(entry, playhead, site.W, site.H)
   if (site.shown !== undefined && entry.id !== site.shownId) site.fade = { from: site.shown, at: Date.now() }
   site.shownId = entry.id
@@ -174,14 +197,14 @@ async function tick($: EngineInterface) {
   for (const site of sites.values()) {
     if (!site.isMounted) continue
     const { W, H } = site
-    const blitted = await $.ui.blit({ requestId: site.requestId, key: 'art', columns: W, rows: H, cells: toCells(frameFor(site), W, H) })
+    const blitted = await $.ui.blit({ requestId: site.requestId, key: 'art', columns: W, rows: H, cells: toCells(frameFor($, site), W, H) })
     if (blitted.deny !== undefined) sites.delete(site.requestId)
   }
 }
 
 async function setAgent($: EngineInterface, state: AgentState, detail = '') {
   if (state !== now.state && chosen.mode === 'shuffle') {
-    const others = CATALOG.filter(entry => entry.id !== currentId())
+    const others = [...CATALOG, ...PRO].filter(entry => entry.id !== currentId())
     shuffled = wrapAt(others, Math.floor(Math.random() * others.length)).id
   }
   now = { state, detail }
@@ -242,14 +265,24 @@ async function ensureDevice($: EngineInterface): Promise<string> {
 
 const setupUrl = (): string => `${SITE_URL}/setup/#d=${device}`
 
+/** The Pro catalogue asciimood.com sends a licensed device (none once the license is gone), kept for next time. */
+async function takePro($: EngineInterface, catalog: unknown) {
+  const was = JSON.stringify((await $.store.get('pro')) ?? null)
+  if (JSON.stringify(catalog ?? null) === was) return
+  setPro(catalog)
+  await $.store.set('pro', catalog ?? null)
+}
+
 /** Reads this device's setup from asciimood.com; resolves whether it changed. */
 async function pull($: EngineInterface): Promise<boolean> {
   await ensureDevice($)
   let next: AsciimoodPrefs | undefined
   try {
     const got = await $.http.fetch(`${SITE_URL}/api/setup/${device}`)
+    const body = JSON.parse(got.text) as { setup?: unknown; pro?: { catalog?: unknown } }
+    await takePro($, body.pro?.catalog)
     if (!got.ok) return false
-    next = cleanSetup((JSON.parse(got.text) as { setup?: unknown }).setup)
+    next = cleanSetup(body.setup)
   } catch {
     return false // offline: keep what we have
   }
@@ -307,7 +340,7 @@ async function stage($: EngineInterface, els: Els & { Raster: ElementConstructor
   const { Box, Raster } = els
   const art = (W: number, H: number) => {
     const site = siteFor(requestId, W, H)
-    return <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor(site), W, H)} />
+    return <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor($, site), W, H)} />
   }
   if (isClean) {
     const W = Math.max(20, Math.min(512, columns))
@@ -326,6 +359,7 @@ async function stage($: EngineInterface, els: Els & { Raster: ElementConstructor
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    setPro(await $.store.get('pro')) // before the setup, which may play Pro animations
     const saved = (await $.store.get('prefs')) as unknown
     chosen = cleanSetup(saved) ?? (await read($, prefs))
     await update($, prefs, () => chosen)
@@ -429,7 +463,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        {framed(els, <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor(site), W, H)} />, W, state)}
+        {framed(els, <Raster key="art" columns={W} rows={H} cells={toCells(site.shown ?? frameFor($, site), W, H)} />, W, state)}
         {statusLine(els, state, detail, '/asciimood to change')}
       </Box>
     )
