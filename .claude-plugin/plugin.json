@@ -1,6 +1,6 @@
 {
   "name": "asciimood",
-  "version": "0.27.0",
+  "version": "0.27.1",
   "description": "Looping ASCII animations that react to what Claude is doing. Choose them on asciimood.com.",
   "author": {
     "name": "Tom Daluzeau"
