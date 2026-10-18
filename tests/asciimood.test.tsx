@@ -202,28 +202,22 @@ test('animations sit on the terminal\'s own ground; a white ink takes the termin
   expect(radiation.fg[0]).toBe(0xf2c21b)
 })
 
-test('play pins one animation for a while, to film a prompt with it', async ($, on) => {
+test('play waits for the next prompt, then plays that animation while Claude works', async ($, on) => {
   const { clock } = host(on)
-  // Claude Code's own band, back once the stage closes
-  on('ui.render', { component: 'AbovePrompt' }, async $ => {
-    const { Text } = $.ui.resolve({ surface: 'terminal', component: 'AbovePrompt' })
-    return <Text>engine band</Text>
-  })
+  on('turn.start', async (_, e) => ({ turnId: e.turnId }))
   const asked = await $.command.run({ command: 'asciimood', args: 'play' })
   expect(asked.text).toContain('which one?')
-  const played = await $.command.run({ command: 'asciimood', args: 'play cup of tea 20' })
-  expect(played.text).toContain('Cup of tea')
-  const stage = () => $.ui.mount({
-    plugin: 'asciimood',
-    surface: 'terminal',
-    component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 50, bodyColumns: 120, scroll: { offset: 0, bodyRows: 49 }, view: {} },
-  })
-  expect(await (await stage()).find({ type: 'Text', text: /Cup of tea/ })).toBeDefined()
-  await clock.advance(19_000)
-  expect(await (await stage()).find({ type: 'Text', text: /Cup of tea/ })).toBeDefined()
+  const armed = await $.command.run({ command: 'asciimood', args: 'play money rain' })
+  expect(armed.text).toContain('Money rain is ready')
+  expect(armed.text).toContain('30 s')
+
+  await $.turn.start({ text: 'build an app that simulates an H200', turnId: 't1' })
+  let n = 0
+  const playing = async () => (await (await $.ui.mount({ ...SPINNER, requestId: `main${n++}` })).find({ type: 'Text', text: /·/ }))?.text
+  expect(await playing()).toContain('Money rain')
+  await clock.advance(29_000)
+  expect(await playing()).toContain('Money rain')
+  // after 30 s the setup's own animation takes over (Bolt while thinking)
   await clock.advance(2_000)
-  const after = await stage()
-  expect(await after.find({ type: 'Text', text: 'engine band' })).toBeDefined()
-  expect(await after.find({ type: 'Text', text: /Cup of tea/ })).toBeUndefined()
+  expect(await playing()).toContain('Bolt')
 })

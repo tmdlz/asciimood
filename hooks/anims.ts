@@ -1096,6 +1096,497 @@ A.mask = (() => {
   };
 })();
 
+A.moneyRain = (() => {
+  // ported from the lab: the drawing sets window.LabAnim, read here
+  const window = {};
+  // Money rain, an Asciimood idea for the "motivating my Claude" series: dollar bills raining
+  // down in three layers. Far "[$]" drift slowly, mid small bills fall twice as fast with a
+  // sway, near big bills fall three times as fast, rocking (sheared rows) or flipping over
+  // (narrowed to edge-on and back). A heap of bundled "[=$=]" grows at the bottom as they land,
+  // then sinks into the floor at the end of the loop so it starts small again.
+  // Every fall, sway and flip is a whole number of turns per loop, so draw(0) equals draw(1).
+  (function () {
+    const TAU = Math.PI * 2;
+    const hash = (a, b, c = 0) => {
+      let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    };
+    const frac = (x) => x - Math.floor(x);
+
+    // the big bill, front view by width: it flips by narrowing to edge-on and back
+    const BIG = {
+      17: [".===============.", "|1  .-------.  1|", "|  ((   $   ))  |", "|1  '-------'  1|", "'==============='"],
+      13: [".===========.", "|1 .-----. 1|", "| ((  $  )) |", "|1 '-----' 1|", "'==========='"],
+      9: [".=======.", "| .---. |", "|(( $ ))|", "| '---' |", "'======='"],
+      5: [".===.", "|.-.|", "|($)|", "|'-'|", "'==='"],
+      3: [".=.", "| |", "|$|", "| |", "'='"],
+      1: ["|", "|", "|", "|", "|"],
+    };
+    const BIG_W = [1, 3, 5, 9, 13, 17];
+    // on small screens, a three-row bill
+    const SMALL = {
+      11: [".=========.", "|1 ( $ ) 1|", "'========='"],
+      7: [".=====.", "| ($) |", "'====='"],
+      3: [".=.", "|$|", "'='"],
+      1: ["|", "|", "|"],
+    };
+    const SMALL_W = [1, 3, 7, 11];
+    const MID = "[=$=]", FAR = "[$]", BRICK = "[=$=]";
+
+    window.LabAnim = {
+      name: "Money rain",
+      note: "dollar bills raining down in three layers, some rocking or flipping, a heap growing below",
+      dur: 6,
+      hues: [48, 132],
+      draw(p, W, H) {
+        const g = Array.from({ length: H }, () => new Array(W).fill(" "));
+        const taken = Array.from({ length: H }, () => new Array(W).fill(false));
+        // Drawn front to back: a sprite row is written whole, or not at all when it would touch
+        // (a cell either side included) something already in front, so a bill behind another, or
+        // sinking into the heap, loses whole rows and never leaves broken pieces.
+        const put = (x, y, s) => {
+          if (y < 0 || y >= H) return;
+          const a = Math.max(0, x - 1), b = Math.min(W - 1, x + s.length);
+          for (let c = a; c <= b; c++) if (taken[y][c]) return;
+          for (let c = a; c <= b; c++) taken[y][c] = true;
+          for (let i = 0; i < s.length; i++) if (x + i >= 0 && x + i < W) g[y][x + i] = s[i];
+        };
+
+        // the heap: Gh rows high in its middle, a mound that widens as it grows
+        const top = Math.max(3, Math.round(H * 0.2)), drop = 2 * Math.max(1, Math.round(H * 0.07));
+        const G0 = top - drop, END = 0.84;
+        const grow = Math.min(1, p / END), sink = p < END ? 0 : (p - END) / (1 - END);
+        const ease = sink * sink * (3 - 2 * sink);
+        const Gh = sink > 0 ? top - drop * ease : G0 + drop * grow;
+        // rows the heap has gone down, so its bricks move with it (drop is even: same stagger at the seam)
+        const sunk = sink > 0 ? Math.round(top - Gh) : 0;
+        const heapAt = (x) => Gh - top * ((x - W / 2) / (W * 0.44)) ** 2;
+
+        // a layer: lanes across the width, each lane with `per` bills spread over the fall
+        const layer = (h, k, lanes, per, jitter, seed, drawOne) => {
+          for (let l = 0; l < lanes; l++) {
+            for (let b = 0; b < per; b++) {
+              const id = l * 7 + b, ph = frac(hash(l, b, seed) * 0.3 + b / per + l * 0.618);
+              const t = p * k + ph, fall = ((Math.floor(t) % k) + k) % k, u = frac(t);
+              const jit = (hash(l, fall * 3 + b, seed + 1) - 0.5) * jitter;
+              const cx = ((l + 0.5 + jit) / lanes) * W, y = Math.round(u * (H + h + 1)) - h;
+              drawOne(cx, y, u, id, fall);
+            }
+          }
+        };
+
+        // the heap, in front of everything: bricks of bundled bills, staggered row to row
+        for (let j = 0; j <= top; j++) {
+          const y = H - 1 - j, off = ((j + sunk) & 1) * 2 + 1;
+          if (y < 0) break;
+          for (let x = 0; x < W; x++) {
+            const k = (x + off) % 5, xc = x - k + 2;
+            if (heapAt(xc) > j) (g[y][x] = BRICK[k]), (taken[y][x] = true);
+          }
+          // a cell of air either side of each row of the heap
+          for (let x = 0; x < W; x++) if (g[y][x] !== " ") {
+            if (x > 0) taken[y][x - 1] = true;
+            if (x < W - 1) taken[y][x + 1] = true;
+          }
+        }
+
+        // near: the big bills, three times per loop; about one in three flips, the others rock
+        const big = H >= 22 && W >= 48;
+        const SET = big ? BIG : SMALL, WS = big ? BIG_W : SMALL_W, bh = big ? 5 : 3;
+        layer(bh, 3, Math.max(2, Math.round(W / (big ? 25 : 18))), 1, 0.2, 37, (cx, y, u, id, fall) => {
+          const sw = TAU * u * 2 + id, x = Math.round(cx + 2 * Math.sin(sw));
+          if (hash(id, fall, 41) < 0.34) {
+            const w = WS[Math.round(Math.abs(Math.cos(TAU * u * 1.5)) * (WS.length - 1))];
+            SET[w].forEach((s, r) => put(x - (w >> 1), y + r, s));
+          } else {
+            // rocking: the rows shear as the bill swings, tilting into its sway
+            const a = 0.7 * Math.cos(sw), w = WS[WS.length - 1], mid = (bh - 1) / 2;
+            SET[w].forEach((s, r) => put(x - (w >> 1) + Math.round((a * (mid - r)) / mid * (big ? 1.4 : 1)), y + r, s));
+          }
+        });
+        // mid: twice per loop, a gentle sway; a small three-row bill (one-row "[=$=]" on small screens)
+        layer(big ? 3 : 1, 2, Math.max(2, Math.round(W / 13)), 1, 0.5, 23, (cx, y, u, id) => {
+          const x = Math.round(cx + 1.2 * Math.sin(TAU * u + id));
+          if (big) SMALL[7].forEach((s, r) => put(x - 3, y + r, s));
+          else put(x - 2, y, MID);
+        });
+        // far: small "[$]", once per loop
+        layer(1, 1, Math.max(3, Math.round(W / 8)), 1, 0.6, 11, (cx, y) => put(Math.round(cx) - 1, y, FAR));
+        return g.map((r) => r.join("")).join("\n");
+      },
+    };
+  })();
+  return window.LabAnim.draw;
+})();
+
+A.keepGoing = (() => {
+  // ported from the lab: the drawing sets window.LabAnim, read here
+  const window = {};
+  // KEEP GOING: the words in big bold block letters striped with "=", a gleam ("@") sweeping
+  // across them, and below a progress bar that fills fast then sticks at 99% while
+  // "almost there..." blinks. The layout is picked once per size (largest letters that fit,
+  // two lines or one, a plain fallback for tiny windows).
+  (function () {
+    // Hand-drawn bold glyphs (cells are twice as tall as wide): a big 7-row cut with stems three
+    // columns wide, and a small 5-row cut for windows too short for it.
+    const BIG = { h: 7, gap: 2, space: 6, gl: {
+      K: ["###    ###", "###   ### ", "###  ###  ", "######    ", "###  ###  ", "###   ### ", "###    ###"],
+      E: ["##########", "###       ", "###       ", "########  ", "###       ", "###       ", "##########"],
+      P: ["######### ", "###    ###", "###    ###", "######### ", "###       ", "###       ", "###       "],
+      G: [" #########", "###       ", "###       ", "###  #####", "###    ###", "###    ###", " #########"],
+      O: [" ######## ", "###    ###", "###    ###", "###    ###", "###    ###", "###    ###", " ######## "],
+      I: ["###", "###", "###", "###", "###", "###", "###"],
+      N: ["###    ###", "####   ###", "#####  ###", "### ## ###", "###  #####", "###   ####", "###    ###"],
+    } };
+    const SMALL = { h: 5, gap: 1, space: 4, gl: {
+      K: ["##  ##", "## ## ", "####  ", "## ## ", "##  ##"],
+      E: ["######", "##    ", "##### ", "##    ", "######"],
+      P: ["##### ", "##  ##", "##### ", "##    ", "##    "],
+      G: [" #####", "##    ", "## ###", "##  ##", " #####"],
+      O: [" #### ", "##  ##", "##  ##", "##  ##", " #### "],
+      I: ["##", "##", "##", "##", "##"],
+      N: ["##   ##", "###  ##", "## # ##", "##  ###", "##   ##"],
+    } };
+    const INK = ["=", "#", "@"]; // face, gleam edge, gleam core
+    const lineW = (F, l) => l.split(" ").reduce((a, w) => a + [...w].reduce((b, c) => b + F.gl[c][0].length, 0) + F.gap * (w.length - 1), 0) + (l.includes(" ") ? F.space : 0);
+    const ease = (t) => t * t * (3 - 2 * t);
+    const seg = (p, a, b) => Math.max(0, Math.min(1, (p - a) / (b - a)));
+
+    // Layout for one size, cached (it only depends on W and H): the tallest letters that fit,
+    // on two lines or one, with the full bar if it fits, else a one-row bar.
+    const CUTS = [6, 5, 4, 3, 2].map((s) => [BIG, s]).concat([[SMALL, 2], [BIG, 1], [SMALL, 1]]);
+    const cache = {};
+    const layout = (W, H) => {
+      const key = W + "x" + H;
+      if (cache[key]) return cache[key];
+      let best = null;
+      for (const [F, s] of CUTS) {
+        for (const lines of [["KEEP", "GOING"], ["KEEP GOING"]]) {
+          for (const full of [true, false]) {
+            const tw = Math.max(...lines.map((l) => lineW(F, l))) * s;
+            const th = lines.length * F.h * s + (lines.length - 1) * s;
+            const base = Math.min(3, Math.max(1, Math.round((F.h * s) / 7)));
+            const bh = full ? 2 + base + 2 : 2;
+            const gap = H - th - bh >= 5 ? Math.min(3, s + 1) : 1;
+            if (tw + 2 <= W && th + gap + bh <= H) { best = { F, s, lines, full, tw, th, base, bh, gap }; break; }
+          }
+          if (best) break;
+        }
+        if (best) break;
+      }
+      const L = best || { compact: true };
+      if (!L.compact) {
+        // Bar thickness: grows with the letters, and with spare rows.
+        L.rows = L.full ? Math.min(2 * L.base, L.base + Math.floor((H - L.th - L.gap - L.bh) / 2)) : 1;
+        if (L.full) L.bh += L.rows - L.base;
+        // Face mask of the letters.
+        const { F, s, lines, tw, th, bh, gap } = L;
+        L.ox = Math.floor((W - tw) / 2);
+        L.oy = Math.floor((H - th - gap - bh) / 2);
+        const face = Array.from({ length: H }, () => new Uint8Array(W));
+        lines.forEach((line, li) => {
+          let cx = L.ox + Math.floor((tw - lineW(F, line) * s) / 2);
+          const cy = L.oy + li * (F.h + 1) * s;
+          for (const ch of line) {
+            if (ch === " ") { cx += (F.space - F.gap) * s; continue; }
+            const g = F.gl[ch];
+            for (let y = 0; y < F.h * s; y++) for (let x = 0; x < g[0].length * s; x++) {
+              if (g[Math.floor(y / s)][Math.floor(x / s)] === "#") {
+                const X = cx + x, Y = cy + y;
+                if (X >= 0 && X < W && Y >= 0 && Y < H) face[Y][X] = 1;
+              }
+            }
+            cx += (g[0].length + F.gap) * s;
+          }
+        });
+        L.face = face;
+        // Top-right corner of the last letter, where the sparkle lands.
+        L.spark = [L.ox + tw - 1, L.oy];
+        // Progress bar under the words.
+        L.by = L.oy + th + gap;
+        L.bw = tw;
+        L.bx = L.ox;
+      }
+      return (cache[key] = L);
+    };
+
+    // Progress in percent at phase p: fast fill with one hiccup, stuck at 99, quick drain.
+    const percent = (p) => {
+      const K = [[0.03, 0], [0.085, 41], [0.105, 47], [0.165, 92], [0.215, 99]];
+      if (p < K[0][0]) return 0;
+      if (p < 0.93) {
+        for (let i = 1; i < K.length; i++) if (p < K[i][0]) {
+          const t = ease(seg(p, K[i - 1][0], K[i][0]));
+          return K[i - 1][1] + (K[i][1] - K[i - 1][1]) * t;
+        }
+        return 99;
+      }
+      return 99 * (1 - ease(seg(p, 0.93, 0.975)));
+    };
+    // Gleam position as a share of the sweep (null when no gleam): once as the bar hits 99, once later.
+    const gleam = (p) => {
+      for (const [a, b] of [[0.22, 0.33], [0.6, 0.71]]) if (p >= a && p < b) return ease(seg(p, a, b));
+      return null;
+    };
+    const sparkle = (p) => {
+      for (const a of [0.315, 0.695]) if (p >= a && p < a + 0.06) return (p - a) / 0.06;
+      return null;
+    };
+    // "> almost there..._" blinks while the bar is stuck; the dots count up. Fixed width, so it
+    // never shifts.
+    const label = (p) => {
+      if (p < 0.235 || p >= 0.925) return "";
+      const t = (p - 0.235) * 8; // seconds into the stall (dur 8)
+      if (t % 1 > 0.7) return "";
+      const dots = 1 + (Math.floor(t / 0.25) % 3);
+      return "> almost there" + ".".repeat(dots) + "_" + " ".repeat(3 - dots);
+    };
+
+    window.LabAnim = {
+      name: "Keep going",
+      note: "KEEP GOING in bold block letters with a gleam, over a progress bar stuck at 99%",
+      dur: 8,
+      hues: [16, 36],
+      draw(p, W, H) {
+        const L = layout(W, H);
+        const pct = percent(p), pctTxt = (String(Math.floor(pct)).padStart(3, " ")) + "%";
+        const g = Array.from({ length: H }, () => Array(W).fill(" "));
+        const put = (x, y, c) => { if (y >= 0 && y < H && x >= 0 && x < W) g[y][x] = c; };
+        const text = (x, y, s) => { for (let i = 0; i < s.length; i++) put(x + i, y, s[i]); };
+        const lab = label(p);
+
+        if (L.compact) {
+          // Tiny window: plain words, a one-row bar, the label.
+          const t = W >= 22 ? "K E E P   G O I N G" : "KEEP GOING";
+          const y0 = Math.max(0, Math.floor((H - 4) / 2));
+          text(Math.floor((W - t.length) / 2), y0, t);
+          const bw = Math.max(6, Math.min(W - 6, 40)), bx = Math.floor((W - bw - 5) / 2);
+          const n = Math.min(bw - 3, Math.floor((pct / 100) * (bw - 2)));
+          text(bx, y0 + 2, "[" + "=".repeat(n) + " ".repeat(bw - 2 - n) + "]" + " " + pctTxt);
+          text(Math.floor((W - lab.length) / 2), y0 + 3, lab);
+          return g.map((r) => r.join("")).join("\n");
+        }
+
+        const { s, face, by, bw, bx, full } = L;
+        // Gleam: a stripe leaning like "/", sweeping left to right across words and bar.
+        const gp = gleam(p), slope = 0.6, gw = 3 * s + 2;
+        const tall = (by + 5 - L.oy) * slope, gx = bx - gw + (gp ?? 0) * (bw + tall + 2 * gw);
+        const ink = (x, y) => {
+          if (gp === null) return INK[0];
+          const d = Math.abs(x + (y - L.oy) * slope - gx);
+          return d < gw * 0.4 ? INK[2] : d < gw ? INK[1] : INK[0];
+        };
+
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (face[y][x]) g[y][x] = ink(x, y);
+
+        // Sparkle at the corner once the gleam has passed.
+        const sp = sparkle(p);
+        if (sp !== null) {
+          const [x, y] = L.spark, r = sp < 0.3 ? 1 : sp < 0.7 ? 2 : 1;
+          put(x + 2, y - 1, "*");
+          if (r >= 1) { put(x + 1, y - 1, "-"); put(x + 3, y - 1, "-"); }
+          if (r >= 2 && y - 2 >= 0) { put(x + 2, y - 2, "|"); put(x + 2, y, "|"); put(x, y - 1, "-"); put(x + 4, y - 1, "-"); }
+        }
+
+        // Progress bar.
+        const room = bx + bw + 5 <= W;
+        const barW = room ? bw : bw - 5;
+        const inner = barW - 2;
+        const n = pct >= 100 ? inner : Math.min(inner - 1, Math.floor((pct / 100) * inner + 1e-9));
+        const rows = L.rows;
+        let y = by;
+        if (full) { text(bx, y, "." + "-".repeat(inner) + "."); y++; }
+        for (let r = 0; r < rows; r++, y++) {
+          let line = full ? "|" : "[";
+          for (let i = 0; i < inner; i++) {
+            line += i < n ? ink(bx + 1 + i, y) : " ";
+          }
+          line += full ? "|" : "]";
+          text(bx, y, line);
+          if (room && r === Math.floor((rows - 1) / 2)) text(bx + barW + 1, y, pctTxt);
+        }
+        if (full) { text(bx, y, "'" + "-".repeat(inner) + "'"); y++; }
+        const lt = room ? lab : (lab ? pctTxt.trim() + "  " + lab : pctTxt.trim());
+        y += full ? 1 : 0;
+        text(bx + Math.floor((barW - lt.length) / 2), Math.min(H - 1, y), lt);
+        return g.map((r) => r.join("")).join("\n");
+      },
+    };
+  })();
+  return window.LabAnim.draw;
+})();
+
+A.neverRest = (() => {
+  // ported from the lab: the drawing sets window.LabAnim, read here
+  const window = {};
+  // Never rest: NEVER over REST in heavy block capitals, yelled like a drill sergeant. Eight beats a
+  // loop, the words take turns: the yelled one goes dense and shakes hard, then settles while the
+  // other one gets yelled. Sweat drops fly off the shouting word, and sleep(8h) -> [ DENIED ] blinks
+  // underneath. Our own 9-row bold font, fitted to any W x H (one or two lines, whichever is bigger).
+  window.LabAnim = {
+    name: "Never rest",
+    note: "NEVER REST in heavy block letters, each word shaking as it is yelled, sweat flying, sleep(8h) -> [ DENIED ] blinking below",
+    dur: 4,
+    hues: [355, 25],
+    draw: (() => {
+      const hash = (a, b, c = 0) => {
+        let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
+        h = Math.imul(h ^ (h >>> 13), 1274126177);
+        return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+      };
+      const F = {
+        N: ["##...##", "###..##", "###..##", "####.##", "##.#.##", "##.####", "##..###", "##..###", "##...##"],
+        E: ["######", "######", "##....", "##....", "#####.", "#####.", "##....", "######", "######"],
+        V: ["##...##", "##...##", "##...##", "##...##", "##...##", ".##.##.", ".##.##.", "..###..", "..###.."],
+        R: ["#####.", "######", "##..##", "##..##", "######", "#####.", "##.##.", "##..##", "##..##"],
+        S: [".#####", "######", "##....", "#####.", ".#####", "....##", "....##", "######", "#####."],
+        T: ["######", "######", "..##..", "..##..", "..##..", "..##..", "..##..", "..##..", "..##.."],
+      };
+      const GH = 9, GAP = 1, LGAP = 3, WGAP = 4;
+      // A run of words as bitmap rows: "." empty, "0" / "1" the pixel of word 0 (NEVER) or 1 (REST).
+      const strip = (words) => {
+        const rows = Array.from({ length: GH }, () => "");
+        words.forEach(([w, id], k) => {
+          [...w].forEach((c, i) => {
+            for (let r = 0; r < GH; r++) rows[r] += (k && !i ? ".".repeat(WGAP) : i ? ".".repeat(GAP) : "") + F[c][r].replace(/#/g, id);
+          });
+        });
+        return rows;
+      };
+      const stack = (lines) => {
+        const ss = lines.map(strip), w = Math.max(...ss.map((s) => s[0].length)), rows = [];
+        ss.forEach((s, i) => {
+          if (i) for (let k = 0; k < LGAP; k++) rows.push(".".repeat(w));
+          const pad = w - s[0].length, l = Math.floor(pad / 2);
+          s.forEach((r) => rows.push(".".repeat(l) + r + ".".repeat(pad - l)));
+        });
+        return rows;
+      };
+      const LAYOUTS = [stack([[["NEVER", "0"]], [["REST", "1"]]]), stack([[["NEVER", "0"], ["REST", "1"]]])];
+      const LINE = "sleep(8h) -> [ DENIED ]", SHORT = "sleep(8h)->[DENIED]";
+
+      // Per size: which word owns each cell, its depth (1 edge, 2 core), each word's box, the line's row.
+      const cache = {};
+      const layout = (W, H) => {
+        const key = W + "x" + H;
+        if (cache[key]) return cache[key];
+        const withLine = H >= 8, room = withLine ? H - 3 : H;
+        let best = null;
+        for (const bm of LAYOUTS) {
+          const wp = bm[0].length, hp = bm.length;
+          // side margins leave room for the shake marks and the flying sweat
+          const s = Math.min((W * 0.8) / wp, (2 * room * 0.9) / hp);
+          if (!best || s > best.s) best = { bm, wp, hp, s };
+        }
+        const { bm, wp, hp, s } = best;
+        const sx = s, sy = Math.min((s / 2) * 1.5, (room * 0.9) / hp);
+        const tw = wp * sx, th = hp * sy, block = th + (withLine ? 3 : 0);
+        const ox = (W - tw) / 2, oy = Math.max(0, (H - block) / 2);
+        const px = (u, v) => (u >= 0 && v >= 0 && u < wp && v < hp ? bm[Math.floor(v)][Math.floor(u)] : ".");
+        const own = [];
+        for (let y = 0; y < H; y++) {
+          own.push([]);
+          for (let x = 0; x < W; x++) {
+            const n = [0, 0];
+            for (const [a, b] of [[0.3, 0.3], [0.7, 0.3], [0.3, 0.7], [0.7, 0.7]]) {
+              const c = px((x + a - ox) / sx, (y + b - oy) / sy);
+              if (c !== ".") n[+c]++;
+            }
+            own[y].push(n[0] >= 2 ? 0 : n[1] >= 2 ? 1 : -1);
+          }
+        }
+        const at = (x, y, w) => y >= 0 && y < H && x >= 0 && x < W && own[y][x] === w;
+        const depth = own.map((row, y) => row.map((w, x) => (w < 0 ? 0 : at(x - 1, y, w) && at(x + 1, y, w) && at(x, y - 1, w) && at(x, y + 1, w) ? 2 : 1)));
+        const box = [0, 1].map((w) => {
+          let x0 = W, y0 = H, x1 = -1, y1 = -1;
+          own.forEach((row, y) => row.forEach((o, x) => { if (o === w) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } }));
+          return { x0, y0, x1, y1 };
+        });
+        const text = W >= LINE.length + 2 ? LINE : SHORT;
+        const line = withLine ? { y: Math.min(H - 1, Math.round(oy + th + 2)), x: Math.floor((W - text.length) / 2), text } : null;
+        return (cache[key] = { own, depth, box, line, unit: sy });
+      };
+
+      const BEATS = 8;
+      // How hard a word shakes this far (u, 0..1) into the beat it is yelled on: a hard jolt that dies down.
+      const shake = (u, b) => {
+        if (u > 0.55) return [0, 0];
+        const amp = 2.4 * Math.pow(1 - u / 0.55, 1.3), k = Math.floor(u * 22);
+        const dir = k % 2 ? -1 : 1, wob = 0.7 + 0.6 * hash(b, k);
+        return [Math.round(dir * amp * wob), u < 0.07 ? -1 : 0];
+      };
+
+      // The calm word stays readable but light, plain "+" (no "==" or "::": ligature fonts fuse them).
+      const DENSE = { 1: "#", 2: "@" }, CALM = { 1: "+", 2: "+" };
+      return (p, W, H) => {
+        const { own, depth, box, line, unit } = layout(W, H);
+        const bt = p * BEATS, bi = Math.floor(bt), b = bi % BEATS, u = bt - bi;
+        const yell = b % 2;
+        const off = [[0, 0], [0, 0]];
+        off[yell] = shake(u, b);
+        const g = Array.from({ length: H }, () => Array(W).fill(" "));
+
+        // The calm word first, then the yelled one over it.
+        for (const w of [1 - yell, yell]) {
+          const [dx, dy] = off[w], ch = w === yell ? DENSE : CALM;
+          for (let y = 0; y < H; y++) {
+            const sy = y - dy;
+            if (sy < 0 || sy >= H) continue;
+            for (let x = 0; x < W; x++) {
+              const sx = x - dx;
+              if (sx >= 0 && sx < W && own[sy][sx] === w) g[y][x] = ch[depth[sy][sx]];
+            }
+          }
+        }
+
+        // Shake marks beside the shouting word while it jolts.
+        const [jx] = off[yell];
+        if (u < 0.4) {
+          const bx = box[yell], mid = (bx.y0 + bx.y1) / 2, half = Math.max(1, Math.round((bx.y1 - bx.y0) * 0.22));
+          for (let y = Math.round(mid - half); y <= Math.round(mid + half); y++) {
+            for (const [x, c] of [[bx.x0 - 3 + jx, "("], [bx.x0 - 5 + jx, "("], [bx.x1 + 3 + jx, ")"], [bx.x1 + 5 + jx, ")"]]) {
+              if (y >= 0 && y < H && x >= 0 && x < W && g[y][x] === " ") g[y][x] = c;
+            }
+          }
+        }
+
+        // Sweat: every yell flicks a drop off each top corner of the word, arcing out and down.
+        // Drops live 1.4 beats, so the last beat's are still falling. A teardrop when there is room.
+        const DROP = unit >= 1.1 ? [" . ", "/ \\", "\\_/"] : unit >= 0.7 ? [".", "o"] : ["o"];
+        for (let back = 0; back < 2; back++) {
+          const k = (b - back + BEATS) % BEATS, age = u + back, w = k % 2, bx = box[w];
+          if (age > 1.4 || bx.x1 < 0) continue;
+          for (const side of [-1, 1]) {
+            const x0 = side < 0 ? bx.x0 - 2 : bx.x1 + 2, y0 = bx.y0 - 1;
+            const vx = side * (3.5 + 2 * hash(k, side + 2)) * unit, vy = -(2.5 + hash(side + 5, k)) * unit, gr = 5 * unit;
+            const x = Math.round(x0 + vx * age), y = Math.round(y0 + vy * age + gr * age * age);
+            const dw = DROP[0].length, dh = DROP.length;
+            DROP.forEach((row, r) => [...row].forEach((c, i) => {
+              const X = x + i - (dw >> 1), Y = y + r - (dh >> 1);
+              if (c !== " " && Y >= 0 && Y < H && X >= 0 && X < W && g[Y][X] === " ") g[Y][X] = c;
+            }));
+          }
+        }
+
+        // sleep(8h) -> [ DENIED ]: DENIED blinks on twice a bar, on the yells of NEVER.
+        if (line) {
+          const on = (bt % 2) < 1.15;
+          const i0 = line.text.indexOf("DENIED");
+          for (let i = 0; i < line.text.length; i++) {
+            const x = line.x + i;
+            if (x < 0 || x >= W) continue;
+            const c = line.text[i];
+            g[line.y][x] = i >= i0 && i < i0 + 6 && !on ? " " : c;
+          }
+        }
+        return g.map((r) => r.join("")).join("\n");
+      };
+    })(),
+  };
+  return window.LabAnim.draw;
+})();
+
 // Pseudo-random dissolve between two frames (used for state transitions).
 A.dissolve = (from, to, k) => {
   let o = "";

@@ -47,6 +47,9 @@ export const CATALOG: Entry[] = [
   { id: 'digit-globe', anim: 'globe', name: 'Digit globe', note: 'a globe of digits turning, a crease of packed numbers rolling across it', hues: [200, 165], dur: 14 },
   { id: 'radiation', name: 'Radiation', note: 'a radiation sign turning slowly while light pulses ripple out from its hub', hues: [0, 0], ink: 0xf2c21b, ground: 0x0b0b0e, dur: 6 },
   { id: 'binary-mask', anim: 'mask', name: 'Binary mask', note: 'a Guy Fawkes mask written in falling 0s and 1s, holding, then washed away by the rain', hues: [0, 0], ink: 0xeeece6, ground: 0x0b0b0e, dur: 9 },
+  { id: 'money-rain', anim: 'moneyRain', name: 'Money rain', note: 'dollar bills raining down in three layers, some rocking or flipping, a heap growing below', hues: [48, 132], dur: 6 },
+  { id: 'keep-going', anim: 'keepGoing', name: 'Keep going', note: 'KEEP GOING in bold block letters with a gleam, over a progress bar stuck at 99%', hues: [16, 36], dur: 8 },
+  { id: 'never-rest', anim: 'neverRest', name: 'Never rest', note: 'NEVER REST in heavy block letters, each word shaking as it is yelled, sweat flying, sleep(8h) -> [ DENIED ] blinking below', hues: [355, 25], dur: 4 },
   { id: 'hero', name: 'ASCIIMOOD', note: 'the name, filled with plasma', hues: [30, 350], dur: 8 },
 ]
 
