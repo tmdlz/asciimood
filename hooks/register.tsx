@@ -119,6 +119,10 @@ let isPaneOpen = false
 let touring: string | undefined
 // `clean` hides the frame and the status line, so the animation fills the stage.
 let isClean = false
+// `/asciimood play <animation>` pins one animation for a while, through a real turn too,
+// so a person can film a prompt being typed and that animation answering it.
+let isPinned = false
+let isTurning = false
 const DEMO: [AgentState, string, number][] = [
   ['think', '', 3500], ['read', 'Read Dashboard.tsx', 3500], ['write', 'Edit theme.css', 4000], ['run', 'Bash npm test', 4000],
   ['error', '1 test failed', 3000], ['think', '', 2500], ['write', 'Edit Dashboard.tsx', 3000], ['run', 'Bash npm test', 3000], ['done', '', 5000],
@@ -224,6 +228,16 @@ function stopReel() {
   reel = undefined
   touring = undefined
   isClean = false
+  isPinned = false
+}
+const PLAY_SECONDS = 20
+/** The animation a person named: its id, or its name in any case, spaces or dashes. */
+function named(words: string[]): Entry | undefined {
+  const key = words.join(' ').replace(/[\s_-]+/g, ' ').trim()
+  if (key === '') return undefined
+  const all = [...CATALOG, ...PRO]
+  const flat = (entry: Entry) => [entry.id.replace(/-/g, ' '), entry.name.toLowerCase().replace(/-/g, ' ')]
+  return all.find(entry => flat(entry).includes(key)) ?? all.find(entry => flat(entry).some(n => n.startsWith(key)))
 }
 function playDemo($: EngineInterface, i = 0) {
   const [state, detail, ms] = wrapAt(DEMO, i)
@@ -388,7 +402,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'asciimood',
       description: 'Choose your Asciimood animations on asciimood.com (or: your Pro key to turn Pro on; demo, tour, stop to film)',
-      argumentHint: '[pro key|demo|tour [seconds] [clean]|stop]',
+      argumentHint: '[pro key|play <animation> [seconds] [clean]|demo|tour [seconds] [clean]|stop]',
     })
     $.clock.every(Math.round(1000 / FPS), () => void tick($))
     $.clock.every(SLOW_POLL_MS, () => void pull($))
@@ -409,21 +423,41 @@ export const register: Register = on => {
       await closeStage($)
       return { text: 'Asciimood: filming stopped.' }
     }
-    if (verb === 'demo' || verb === 'tour') {
+    if (verb === 'play') {
+      const seconds = Number(rest.find(word => /^\d+(\.\d+)?$/.test(word)) ?? PLAY_SECONDS)
+      const entry = named(rest.filter(word => word !== 'clean' && !/^\d+(\.\d+)?$/.test(word)))
+      if (entry === undefined) {
+        const names = [...CATALOG, ...PRO].map(e => e.id).join(', ')
+        return { text: `Asciimood: which one? /asciimood play <animation> [seconds] [clean]\n${names}` }
+      }
       stopReel()
-      if (verb === 'demo') playDemo($)
-      else {
+      touring = entry.id
+      isPinned = true
+      isClean = rest.includes('clean')
+      void setAgent($, now.state === 'idle' || now.state === 'done' ? 'think' : now.state, entry.name)
+      reel = $.clock.after(Math.max(1, seconds) * 1000, () => {
+        // mid-turn, the setup's own animation takes over; otherwise the stage closes
+        stopReel()
+        if (!isTurning) void setAgent($, 'idle').then(() => closeStage($))
+      })
+    }
+    if (verb === 'demo' || verb === 'tour' || verb === 'play') {
+      if (verb === 'demo') { stopReel(); playDemo($) }
+      else if (verb === 'tour') {
+        stopReel()
         const seconds = Number(rest.find(word => /^\d+(\.\d+)?$/.test(word)) ?? 4)
         isClean = rest.includes('clean')
         playTour($, CATALOG, Math.max(1, seconds) * 1000)
       }
+      const what = verb === 'play' ? `Asciimood is playing ${BY_ID.get(touring ?? '')?.name}` : 'Asciimood is filming'
+      const then = verb === 'play' ? ' Type your prompt: it keeps playing while Claude works.' : ''
       if (e.presentation?.isFullscreen !== true) {
         await update($, view, () => ({ isOpen: true }))
-        return { text: 'Asciimood is filming above the prompt: /asciimood stop to end.' }
+        return { text: `${what} above the prompt.${then} /asciimood stop to end.` }
       }
       const opened = await $.ui.open({ id: PANE, title: 'Asciimood', rows: PANE_ROWS, columns: Math.max(80, (e.presentation?.columns ?? 120) - 4) })
       isPaneOpen = true
-      return { text: opened.isPlaced ? 'Asciimood is filming: /asciimood stop to end.' : 'Asciimood is waiting for a wider terminal.' }
+      return { text: opened.isPlaced ? `${what}.${then} /asciimood stop to end.` : 'Asciimood is waiting for a wider terminal.' }
     }
     if (verb !== '') return { text: `Asciimood is set up on the website now: ${setupUrl()}` }
 
@@ -439,11 +473,13 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
+      // a pinned animation carries on through the turn, in the working line; anything else stops
       if (reel !== undefined) {
-        stopReel()
+        if (!isPinned) stopReel()
         await closeStage($)
       }
       turnStartedAt = Date.now()
+      isTurning = true
       await setAgent($, 'think')
     }
 
@@ -462,6 +498,7 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     if ((e as { agentId?: string }).agentId === undefined) {
+      isTurning = false
       if (e.reason === 'error') await setAgent($, 'error', 'the turn failed')
       else if (e.isAborted) await setAgent($, 'idle')
       else await setAgent($, 'done', elapsed(e.durationMs))

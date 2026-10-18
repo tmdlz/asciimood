@@ -201,3 +201,29 @@ test('animations sit on the terminal\'s own ground; a white ink takes the termin
   expect(radiation.bg).toBeUndefined()
   expect(radiation.fg[0]).toBe(0xf2c21b)
 })
+
+test('play pins one animation for a while, to film a prompt with it', async ($, on) => {
+  const { clock } = host(on)
+  // Claude Code's own band, back once the stage closes
+  on('ui.render', { component: 'AbovePrompt' }, async $ => {
+    const { Text } = $.ui.resolve({ surface: 'terminal', component: 'AbovePrompt' })
+    return <Text>engine band</Text>
+  })
+  const asked = await $.command.run({ command: 'asciimood', args: 'play' })
+  expect(asked.text).toContain('which one?')
+  const played = await $.command.run({ command: 'asciimood', args: 'play cup of tea 20' })
+  expect(played.text).toContain('Cup of tea')
+  const stage = () => $.ui.mount({
+    plugin: 'asciimood',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 50, bodyColumns: 120, scroll: { offset: 0, bodyRows: 49 }, view: {} },
+  })
+  expect(await (await stage()).find({ type: 'Text', text: /Cup of tea/ })).toBeDefined()
+  await clock.advance(19_000)
+  expect(await (await stage()).find({ type: 'Text', text: /Cup of tea/ })).toBeDefined()
+  await clock.advance(2_000)
+  const after = await stage()
+  expect(await after.find({ type: 'Text', text: 'engine band' })).toBeDefined()
+  expect(await after.find({ type: 'Text', text: /Cup of tea/ })).toBeUndefined()
+})
