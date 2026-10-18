@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { BoxProps, ElementConstructor, EngineInterface, RasterProps, Register, RenderChildren, TextProps, Timer } from 'claude-code'
 
-import { BY_ID, CATALOG, DEFAULTS, PRO, dissolve, proFrames, proSize, render, setPro, toCells } from './catalog.ts'
+import { BY_ID, CATALOG, DEFAULTS, PRO, dissolve, proFrames, proSize, render, setRemote, toCells } from './catalog.ts'
 import type { Entry, Frame } from './catalog.ts'
 import type { AgentState, AsciimoodAgent, AsciimoodPrefs, AsciimoodView } from '../types'
 
@@ -158,8 +158,8 @@ function hasFrames($: EngineInterface, entry: Entry, W: number, H: number): bool
 
 const frameFor = ($: EngineInterface, site: Site): Frame => {
   let entry = current()
-  // A Pro animation plays once its frames for this size are here: the state's default till then.
-  if (entry.pro === true && !hasFrames($, entry, site.W, site.H)) entry = BY_ID.get(DEFAULTS[now.state]) ?? wrapAt(CATALOG, 0)
+  // A Pro or newer free animation plays once its frames for this size are here: the state's default till then.
+  if (entry.remote === true && !hasFrames($, entry, site.W, site.H)) entry = BY_ID.get(DEFAULTS[now.state]) ?? wrapAt(CATALOG, 0)
   const frame = render(entry, playhead, site.W, site.H)
   if (site.shown !== undefined && entry.id !== site.shownId) site.fade = { from: site.shown, at: Date.now() }
   site.shownId = entry.id
@@ -209,7 +209,6 @@ async function setAgent($: EngineInterface, state: AgentState, detail = '') {
   }
   now = { state, detail }
   await update($, agent, () => now)
-  $.ui.status(LABELS[state])
   idleTimer?.cancel()
   idleTimer = undefined
   if (state === 'done') {
@@ -266,11 +265,13 @@ async function ensureDevice($: EngineInterface): Promise<string> {
 const setupUrl = (): string => `${SITE_URL}/setup/#d=${device}`
 
 /** The Pro catalogue asciimood.com sends a licensed device (none once the license is gone), kept for next time. */
-async function takePro($: EngineInterface, catalog: unknown) {
-  const was = JSON.stringify((await $.store.get('pro')) ?? null)
-  if (JSON.stringify(catalog ?? null) === was) return
-  setPro(catalog)
-  await $.store.set('pro', catalog ?? null)
+/** The free and Pro catalogues asciimood.com sent, kept for the next session (and offline). */
+async function takeRemote($: EngineInterface, free: unknown, pro: unknown) {
+  const was = JSON.stringify([(await $.store.get('free')) ?? null, (await $.store.get('pro')) ?? null])
+  if (JSON.stringify([free ?? null, pro ?? null]) === was) return
+  setRemote(free, pro)
+  await $.store.set('free', free ?? null)
+  await $.store.set('pro', pro ?? null)
 }
 
 /** Turns Pro on for this device with the key from the purchase email; says how it went. */
@@ -299,8 +300,8 @@ async function pull($: EngineInterface): Promise<boolean> {
   let next: AsciimoodPrefs | undefined
   try {
     const got = await $.http.fetch(`${SITE_URL}/api/setup/${device}`)
-    const body = JSON.parse(got.text) as { setup?: unknown; pro?: { catalog?: unknown } }
-    await takePro($, body.pro?.catalog)
+    const body = JSON.parse(got.text) as { setup?: unknown; free?: { catalog?: unknown }; pro?: { catalog?: unknown } }
+    await takeRemote($, body.free?.catalog, body.pro?.catalog)
     if (!got.ok) return false
     next = cleanSetup(body.setup)
   } catch {
@@ -379,7 +380,7 @@ async function stage($: EngineInterface, els: Els & { Raster: ElementConstructor
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    setPro(await $.store.get('pro')) // before the setup, which may play Pro animations
+    setRemote(await $.store.get('free'), await $.store.get('pro')) // before the setup, which may play them
     const saved = (await $.store.get('prefs')) as unknown
     chosen = cleanSetup(saved) ?? (await read($, prefs))
     await update($, prefs, () => chosen)
@@ -393,7 +394,6 @@ export const register: Register = on => {
     $.clock.every(Math.round(1000 / FPS), () => void tick($))
     $.clock.every(SLOW_POLL_MS, () => void pull($))
     void pull($)
-    $.ui.status(LABELS[now.state])
 
     return next(e)
   })

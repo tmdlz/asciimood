@@ -21,6 +21,8 @@ export type Entry = {
   ground?: number
   /** Asciimood Pro: drawn on asciimood.com ahead of time, its frames fetched for a licensed device. */
   pro?: true
+  /** Drawn on asciimood.com ahead of time and its frames fetched: every Pro one, and free ones added since this release. */
+  remote?: true
 }
 
 export const CATALOG: Entry[] = [
@@ -70,16 +72,23 @@ export const proSize = (W: number, H: number): string => `${fitting(PRO_COLS, W)
 export const proFrames = new Map<string, string[][]>()
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-/** Takes the Pro catalogue asciimood.com sent (or none, once the license is gone). */
-export function setPro(raw: unknown): void {
+/**
+ * Takes the catalogues asciimood.com sent: the free animations added since this release, which
+ * every device gets, and the Pro ones (none without a license, or once it is gone).
+ */
+export function setRemote(free: unknown, pro: unknown): void {
   for (const entry of PRO.splice(0)) BY_ID.delete(entry.id)
+  take(free, false)
+  take(pro, true)
+}
+function take(raw: unknown, isPro: boolean): void {
   if (!Array.isArray(raw)) return
   for (const r of raw as Record<string, unknown>[]) {
     const { id, name, note, dur, hues, ink, ground } = r ?? {}
     if (typeof id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(id) || BY_ID.has(id)) continue
     if (typeof name !== 'string' || typeof note !== 'string' || !isNum(dur) || dur <= 0) continue
     const pair = Array.isArray(hues) && isNum(hues[0]) && isNum(hues[1]) ? ([hues[0], hues[1]] as [number, number]) : ([0, 0] as [number, number])
-    const entry: Entry = { id, name: name.slice(0, 40), note: note.slice(0, 200), hues: pair, dur, pro: true }
+    const entry: Entry = { id, name: name.slice(0, 40), note: note.slice(0, 200), hues: pair, dur, remote: true, ...(isPro ? { pro: true as const } : {}) }
     if (isNum(ink)) entry.ink = ink
     if (isNum(ground)) entry.ground = ground
     PRO.push(entry)
@@ -136,7 +145,7 @@ const shaded = (chars: string[], entry: Entry, W: number, H: number): Frame => {
 /** The picture `entry` shows `t` seconds in, sized W x H. */
 export const render = (entry: Entry, t: number, W: number, H: number): Frame => {
   const p = (t / entry.dur) % 1
-  if (entry.pro === true) {
+  if (entry.remote === true) {
     const size = proSize(W, H)
     const loop = proFrames.get(`${entry.id}@${size}`) ?? []
     const lines = loop[Math.floor(p * loop.length)] ?? []

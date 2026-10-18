@@ -201,3 +201,27 @@ test('animations sit on the terminal\'s own ground; a white ink takes the termin
   expect(radiation.bg).toBeUndefined()
   expect(radiation.fg[0]).toBe(0xf2c21b)
 })
+
+test('a free animation added on asciimood.com since this release plays on any device, no license', async ($, on) => {
+  mock.store(on, { device: '0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43' })
+  const clock = mock.clock(on)
+  mock.env(on, {})
+  on('process.run', async () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
+  const GULLY = { id: 'golden-whistle', name: 'Golden whistle', note: 'a gold whistle', dur: 6, hues: [40, 50] }
+  const asked: string[] = []
+  on('http.fetch', async (_, e) => {
+    asked.push(e.url)
+    if (e.url.includes('/api/pro/frames/')) {
+      const frame = Array.from({ length: 28 }, () => 'W'.repeat(96)).join('\n')
+      return { value: { status: 200, ok: true, headers: {}, text: [frame, frame].join('\f') } }
+    }
+    const body = { setup: { mode: 'one', one: 'golden-whistle', perState: {}, isHidingTools: true }, free: { catalog: [GULLY] } }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
+  })
+  await $.command.run({ command: 'asciimood', args: '' })
+  await clock.advance(3_500)
+  const ui = await $.ui.mount(SPINNER)
+  expect(await ui.find({ type: 'Text', text: /Golden whistle/ })).toBeDefined()
+  await clock.advance(200)
+  expect(asked).toContain('https://asciimood.com/api/pro/frames/golden-whistle/96x28?d=0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43')
+})
