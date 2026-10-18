@@ -17,7 +17,7 @@ export type Entry = {
   dur: number
   /** One 0xRRGGBB ink for every character, in place of the hues. */
   ink?: number
-  /** A 0xRRGGBB ground behind the picture, in place of the terminal's. */
+  /** The 0xRRGGBB ground the picture was drawn on (the website's); the terminal keeps its own. */
   ground?: number
   /** Asciimood Pro: drawn on asciimood.com ahead of time, its frames fetched for a licensed device. */
   pro?: true
@@ -108,16 +108,26 @@ const hsl = (h: number, s: number, l: number): number => {
   return (c(0) << 16) | (c(8) << 8) | c(4)
 }
 const DEFAULT_COLOR = 0x01000000
+/** A white or grey ink, which the terminal's own text colour stands in for. */
+const isNeutral = (c: number): boolean => {
+  const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255
+  return Math.max(r, g, b) - Math.min(r, g, b) <= 0x18
+}
+/**
+ * The picture on the terminal's own ground, no box around it. A white or grey ink takes the
+ * terminal's text colour, so the drawing turns dark on a light terminal; coloured inks stay.
+ */
 const shaded = (chars: string[], entry: Entry, W: number, H: number): Frame => {
   const fg = new Uint32Array(W * H)
   const [h1, h2] = entry.hues
+  const ink = entry.ink !== undefined && isNeutral(entry.ink) ? DEFAULT_COLOR : entry.ink
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const k = (x / W) * 0.6 + (y / H) * 0.4
-      fg[y * W + x] = entry.ink ?? hsl(h1 + (h2 - h1) * k, 0.75, 0.68)
+      fg[y * W + x] = ink ?? hsl(h1 + (h2 - h1) * k, 0.75, 0.68)
     }
   }
-  return { chars, fg, bg: entry.ground }
+  return { chars, fg }
 }
 
 /** The picture `entry` shows `t` seconds in, sized W x H. */

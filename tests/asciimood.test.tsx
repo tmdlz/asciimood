@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { BY_ID, render } from '../hooks/catalog.ts'
 
 /** What the engine answers beneath the plugin in a session: preferences, the clock, and asciimood.com. */
 const host = (on: On, setup: unknown = undefined) => {
@@ -190,4 +191,13 @@ test('/asciimood with the Pro key from the email turns Pro on for this device', 
   expect(sent.find(s => s.url.endsWith('/api/pro/activate'))?.body).toBe(JSON.stringify({ device: '0b7c1a52-4d3e-4f7a-9c11-2a6b8e0d5f43', key: 'ASCIIMOOD-GOOD-1234-ABCD' }))
   const bad = await $.command.run({ command: 'asciimood', args: 'activate ASCIIMOOD-NOPE-0000-0000' })
   expect(bad.text).toContain('not known')
+})
+
+test('animations sit on the terminal\'s own ground; a white ink takes the terminal\'s text colour', async () => {
+  const bolt = render(BY_ID.get('bolt')!, 0, 40, 12) // white ink, drawn on a black ground on the website
+  expect(bolt.bg).toBeUndefined()
+  expect(bolt.fg[0]).toBe(0x01000000)
+  const radiation = render(BY_ID.get('radiation')!, 0, 40, 12) // yellow ink keeps its colour
+  expect(radiation.bg).toBeUndefined()
+  expect(radiation.fg[0]).toBe(0xf2c21b)
 })
