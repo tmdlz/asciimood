@@ -1,5 +1,6 @@
 {
   "name": "asciimood",
   "owner": { "name": "Tom Daluzeau" },
+  "metadata": { "description": "Asciimood: ASCII animations that play in Claude Code while it works. asciimood.com" },
   "plugins": [{ "name": "asciimood", "source": "./" }]
 }
