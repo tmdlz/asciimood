@@ -41,7 +41,6 @@ Then restart Claude Code.
 
 These run in the plugin alone: no model call, no tokens.
 
-- `/asciimood play <animation>`: the next prompt you send plays that animation for 30 seconds while Claude works (`/asciimood play money rain 45` for 45), on the usual Claude Code screen: made to film a prompt and its animation.
 - `/asciimood demo`: plays a made-up session (thinking, reading, writing, running, an error, done) with your setup.
 - `/asciimood tour`: walks the whole library, 4 seconds each. `/asciimood tour 6` gives each 6 seconds. Add `clean` (`/asciimood tour 3 clean`) to hide the frame and status line, so the animation fills the window.
 - `/asciimood stop`: ends it. Sending a real message ends it too.

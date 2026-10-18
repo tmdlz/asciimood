@@ -201,23 +201,3 @@ test('animations sit on the terminal\'s own ground; a white ink takes the termin
   expect(radiation.bg).toBeUndefined()
   expect(radiation.fg[0]).toBe(0xf2c21b)
 })
-
-test('play waits for the next prompt, then plays that animation while Claude works', async ($, on) => {
-  const { clock } = host(on)
-  on('turn.start', async (_, e) => ({ turnId: e.turnId }))
-  const asked = await $.command.run({ command: 'asciimood', args: 'play' })
-  expect(asked.text).toContain('which one?')
-  const armed = await $.command.run({ command: 'asciimood', args: 'play money rain' })
-  expect(armed.text).toContain('Money rain is ready')
-  expect(armed.text).toContain('30 s')
-
-  await $.turn.start({ text: 'build an app that simulates an H200', turnId: 't1' })
-  let n = 0
-  const playing = async () => (await (await $.ui.mount({ ...SPINNER, requestId: `main${n++}` })).find({ type: 'Text', text: /·/ }))?.text
-  expect(await playing()).toContain('Money rain')
-  await clock.advance(29_000)
-  expect(await playing()).toContain('Money rain')
-  // after 30 s the setup's own animation takes over (Bolt while thinking)
-  await clock.advance(2_000)
-  expect(await playing()).toContain('Bolt')
-})

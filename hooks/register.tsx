@@ -119,10 +119,6 @@ let isPaneOpen = false
 let touring: string | undefined
 // `clean` hides the frame and the status line, so the animation fills the stage.
 let isClean = false
-// `/asciimood play <animation>` waits for the next prompt, then pins that animation for a
-// while, so a person can film the usual Claude Code screen: a prompt typed, the animation answering.
-let isPinned = false
-let armed: { id: string, ms: number } | undefined
 const DEMO: [AgentState, string, number][] = [
   ['think', '', 3500], ['read', 'Read Dashboard.tsx', 3500], ['write', 'Edit theme.css', 4000], ['run', 'Bash npm test', 4000],
   ['error', '1 test failed', 3000], ['think', '', 2500], ['write', 'Edit Dashboard.tsx', 3000], ['run', 'Bash npm test', 3000], ['done', '', 5000],
@@ -228,16 +224,6 @@ function stopReel() {
   reel = undefined
   touring = undefined
   isClean = false
-  isPinned = false
-}
-const PLAY_SECONDS = 30
-/** The animation a person named: its id, or its name in any case, spaces or dashes. */
-function named(words: string[]): Entry | undefined {
-  const key = words.join(' ').replace(/[\s_-]+/g, ' ').trim()
-  if (key === '') return undefined
-  const all = [...CATALOG, ...PRO]
-  const flat = (entry: Entry) => [entry.id.replace(/-/g, ' '), entry.name.toLowerCase().replace(/-/g, ' ')]
-  return all.find(entry => flat(entry).includes(key)) ?? all.find(entry => flat(entry).some(n => n.startsWith(key)))
 }
 function playDemo($: EngineInterface, i = 0) {
   const [state, detail, ms] = wrapAt(DEMO, i)
@@ -402,7 +388,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'asciimood',
       description: 'Choose your Asciimood animations on asciimood.com (or: your Pro key to turn Pro on; demo, tour, stop to film)',
-      argumentHint: '[pro key|play <animation> [seconds]|demo|tour [seconds] [clean]|stop]',
+      argumentHint: '[pro key|demo|tour [seconds] [clean]|stop]',
     })
     $.clock.every(Math.round(1000 / FPS), () => void tick($))
     $.clock.every(SLOW_POLL_MS, () => void pull($))
@@ -419,25 +405,14 @@ export const register: Register = on => {
     const [verb = '', ...rest] = e.args.trim().toLowerCase().split(/\s+/)
     if (verb === 'stop') {
       stopReel()
-      armed = undefined
       await setAgent($, 'idle')
       await closeStage($)
       return { text: 'Asciimood: filming stopped.' }
     }
-    if (verb === 'play') {
-      const seconds = Number(rest.find(word => /^\d+(\.\d+)?$/.test(word)) ?? PLAY_SECONDS)
-      const entry = named(rest.filter(word => word !== 'clean' && !/^\d+(\.\d+)?$/.test(word)))
-      if (entry === undefined) {
-        const names = [...CATALOG, ...PRO].map(e => e.id).join(', ')
-        return { text: `Asciimood: which one? /asciimood play <animation> [seconds]\n${names}` }
-      }
-      armed = { id: entry.id, ms: Math.max(1, seconds) * 1000 }
-      return { text: `Asciimood: ${entry.name} is ready. Type your prompt: it plays for ${seconds} s while Claude works.` }
-    }
     if (verb === 'demo' || verb === 'tour') {
-      if (verb === 'demo') { stopReel(); playDemo($) }
-      else if (verb === 'tour') {
-        stopReel()
+      stopReel()
+      if (verb === 'demo') playDemo($)
+      else {
         const seconds = Number(rest.find(word => /^\d+(\.\d+)?$/.test(word)) ?? 4)
         isClean = rest.includes('clean')
         playTour($, CATALOG, Math.max(1, seconds) * 1000)
@@ -464,18 +439,9 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
-      // a pinned animation carries on through the turn, in the working line; anything else stops
-      if (reel !== undefined && !isPinned) {
+      if (reel !== undefined) {
         stopReel()
         await closeStage($)
-      }
-      if (armed !== undefined) {
-        // the armed animation plays in the working line, then the setup's own takes over
-        stopReel()
-        touring = armed.id
-        isPinned = true
-        reel = $.clock.after(armed.ms, stopReel)
-        armed = undefined
       }
       turnStartedAt = Date.now()
       await setAgent($, 'think')
